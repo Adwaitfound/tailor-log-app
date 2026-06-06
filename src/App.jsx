@@ -32,10 +32,8 @@ export default function App() {
   const [tailors, setTailors] = useState(DEFAULT_TAILORS);
   const [selectedTailorFilter, setSelectedTailorFilter] = useState('All');
 
-  // --- RESPONSIVE TAB STATE ---
-  const [mobileTab, setMobileTab] = useState('log'); // log, pay, ledger, reports, settings
-  const [desktopFormTab, setDesktopFormTab] = useState('log'); // log, pay
-  const [desktopViewTab, setDesktopViewTab] = useState('ledger'); // ledger, reports, settings
+  // --- VIEW STATE ---
+  const [currentView, setCurrentView] = useState('log'); // log, pay, ledger, reports, settings
 
   // --- FORM STATES ---
   const [prodForm, setProdForm] = useState({
@@ -177,8 +175,7 @@ export default function App() {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tailor_entries'), newEntry);
       showToast("Production logged successfully!");
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
-      setMobileTab('ledger');
-      setDesktopViewTab('ledger');
+      setCurrentView('ledger');
     } catch (err) {
       showToast("Failed to save entry", "error");
     }
@@ -205,8 +202,7 @@ export default function App() {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tailor_entries'), newEntry);
       showToast("Payment recorded successfully!");
       setPayForm(prev => ({ ...prev, amount: '', note: '' }));
-      setMobileTab('ledger');
-      setDesktopViewTab('ledger');
+      setCurrentView('ledger');
     } catch (err) {
       showToast("Failed to record payment", "error");
     }
@@ -286,14 +282,26 @@ export default function App() {
     return Object.values(weeks).sort((a, b) => b.sortKey - a.sortKey);
   }, [filteredEntries]);
 
+  // --- REPLACING EVERYTHING BELOW THIS POINT FOR THE NEW DASHBOARD LAYOUT ---
+  
+  const NavItem = ({ view, icon: Icon, label }) => (
+    <button 
+      onClick={() => setCurrentView(view)} 
+      className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-medium text-sm border border-transparent ${currentView === view ? 'bg-stone-900 text-white shadow-md' : 'text-stone-500 hover:text-stone-900 hover:bg-stone-100 hover:border-stone-200'}`}
+    >
+      <Icon size={18} className={currentView === view ? 'text-stone-300' : 'text-stone-400'} />
+      {label}
+    </button>
+  );
+
   const renderLogForm = () => (
-    <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-6 md:p-8 animate-in fade-in slide-in-from-bottom-4">
-      <div className="mb-6 lg:hidden">
-        <h2 className="text-2xl font-serif text-stone-900 tracking-tight">Log Stitched Batch</h2>
-        <p className="text-stone-500 text-sm mt-1">Record daily production.</p>
+    <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-6 sm:p-8 animate-in fade-in slide-in-from-bottom-4 max-w-2xl mx-auto mt-4">
+      <div className="mb-8 pb-6 border-b border-stone-100">
+        <h2 className="text-2xl sm:text-3xl font-serif text-stone-900 tracking-tight">Log Stitched Batch</h2>
+        <p className="text-stone-500 text-sm mt-1">Record daily production to update the ledger.</p>
       </div>
       <form onSubmit={handleProdSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 lg:gap-8">
           <div className="space-y-1.5">
             <label className="text-[11px] font-bold text-stone-500 uppercase tracking-widest ml-1">Tailor</label>
             <div className="relative">
@@ -321,34 +329,34 @@ export default function App() {
           </div>
         </div>
 
-        <div className="pt-4 border-t border-stone-100">
+        <div className="pt-6 pb-2 border-t border-b border-stone-100 my-8">
           <label className="block text-[11px] font-bold text-stone-500 mb-4 uppercase tracking-widest text-center">Quantities by Size</label>
-          <div className="flex justify-between gap-2 max-w-sm mx-auto">
+          <div className="flex justify-between gap-3 max-w-full mx-auto">
             {['XS', 'S', 'M', 'L', 'XL'].map(size => (
               <div key={size} className="flex-1 group">
                 <label className="block text-[10px] font-bold text-stone-400 mb-2 text-center group-focus-within:text-stone-900 transition-colors">{size}</label>
-                <input type="number" min="0" value={prodForm.sizes[size] || ''} onChange={(e) => setProdForm(prev => ({ ...prev, sizes: { ...prev.sizes, [size]: parseInt(e.target.value) || 0 } }))} placeholder="0" className="w-full py-3 text-center bg-stone-50 border-transparent rounded-xl text-base font-semibold text-stone-800 focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none transition-all placeholder:font-normal placeholder:text-stone-300"/>
+                <input type="number" min="0" value={prodForm.sizes[size] || ''} onChange={(e) => setProdForm(prev => ({ ...prev, sizes: { ...prev.sizes, [size]: parseInt(e.target.value) || 0 } }))} placeholder="0" className="w-full py-3.5 text-center bg-stone-50 border-transparent rounded-xl text-base font-semibold text-stone-800 focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none transition-all placeholder:font-normal placeholder:text-stone-300"/>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-6 border-t border-stone-100 mt-6 gap-4">
-          <div className="flex-1">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-6 pt-2">
+          <div className="w-full sm:flex-1">
             <label className="text-[11px] font-bold text-stone-500 uppercase tracking-widest ml-1 mb-1.5 block">Rate per Piece</label>
             <div className="relative">
               <span className="absolute left-4 top-3.5 text-stone-400 font-medium">₹</span>
               <input type="number" value={prodForm.pieceRate} onChange={(e) => setProdForm({...prodForm, pieceRate: parseFloat(e.target.value) || 0})} className="w-full pl-8 pr-4 py-3.5 bg-stone-50 border-transparent rounded-2xl text-base font-semibold text-stone-800 focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none transition-all" required/>
             </div>
           </div>
-          <div className="text-right">
+          <div className="w-full sm:text-right bg-stone-50 sm:bg-transparent p-4 sm:p-0 rounded-2xl border border-stone-100 sm:border-none">
             <p className="text-[10px] text-stone-400 uppercase tracking-widest font-bold mb-1">Batch Value</p>
-            <p className="text-2xl lg:text-3xl font-serif tracking-tight text-stone-900">
+            <p className="text-3xl font-serif tracking-tight text-stone-900">
               ₹{Object.values(prodForm.sizes).reduce((a, b) => a + b, 0) * prodForm.pieceRate}
             </p>
           </div>
         </div>
-        <button type="submit" className="w-full py-4 mt-4 bg-stone-900 hover:bg-stone-800 text-white font-medium rounded-2xl shadow-lg shadow-stone-900/20 transition-all flex justify-center items-center gap-2">
+        <button type="submit" className="w-full py-4 mt-6 bg-stone-900 hover:bg-stone-800 text-white font-medium rounded-2xl shadow-lg shadow-stone-900/20 transition-all flex justify-center items-center gap-2 text-base">
           <Plus size={18} /> Save Batch
         </button>
       </form>
@@ -356,13 +364,13 @@ export default function App() {
   );
 
   const renderPayForm = () => (
-    <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-6 md:p-8 animate-in fade-in slide-in-from-bottom-4">
-      <div className="mb-6 lg:hidden">
-        <h2 className="text-2xl font-serif text-stone-900 tracking-tight">Record Payout</h2>
-        <p className="text-stone-500 text-sm mt-1">Log cash payments and advances.</p>
+    <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-6 sm:p-8 animate-in fade-in slide-in-from-bottom-4 max-w-2xl mx-auto mt-4">
+      <div className="mb-8 pb-6 border-b border-stone-100">
+        <h2 className="text-2xl sm:text-3xl font-serif text-stone-900 tracking-tight">Record Payout</h2>
+        <p className="text-stone-500 text-sm mt-1">Log cash payments and advances to tailors.</p>
       </div>
       <form onSubmit={handlePaySubmit} className="space-y-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 lg:gap-8">
           <div className="space-y-1.5">
             <label className="text-[11px] font-bold text-stone-500 uppercase tracking-widest ml-1">Tailor</label>
             <div className="relative">
@@ -379,19 +387,19 @@ export default function App() {
           </div>
         </div>
 
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 pt-4">
           <label className="text-[11px] font-bold text-stone-500 uppercase tracking-widest ml-1">Amount Paid</label>
           <div className="relative">
-            <span className="absolute left-5 top-3.5 text-stone-400 font-serif text-xl">₹</span>
-            <input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-10 pr-4 py-4 bg-stone-50 border-transparent rounded-2xl text-2xl font-serif tracking-tight text-stone-900 focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none transition-all" required/>
+            <span className="absolute left-5 top-3.5 text-stone-400 font-serif text-2xl">₹</span>
+            <input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-stone-50 border-transparent rounded-2xl text-3xl font-serif tracking-tight text-stone-900 focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none transition-all" required/>
           </div>
         </div>
 
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 pt-4">
           <label className="text-[11px] font-bold text-stone-500 uppercase tracking-widest ml-1">Note (Optional)</label>
-          <input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement" className="w-full px-4 py-3.5 bg-stone-50 border-transparent rounded-2xl text-sm text-stone-800 focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none transition-all" />
+          <input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement" className="w-full px-4 py-4 bg-stone-50 border-transparent rounded-2xl text-sm text-stone-800 focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none transition-all" />
         </div>
-        <button type="submit" className="w-full py-4 mt-8 bg-emerald-700 hover:bg-emerald-800 text-white font-medium rounded-2xl shadow-lg shadow-emerald-700/20 transition-all flex justify-center items-center gap-2">
+        <button type="submit" className="w-full py-4 mt-8 bg-emerald-700 hover:bg-emerald-800 text-white font-medium rounded-2xl shadow-lg shadow-emerald-700/20 transition-all flex justify-center items-center gap-2 text-base">
           <CreditCard size={18} /> Confirm Payment
         </button>
       </form>
@@ -399,65 +407,67 @@ export default function App() {
   );
 
   const renderLedger = () => (
-    <div className="animate-in fade-in slide-in-from-bottom-4">
-      {/* Desktop Summary Header (Only visible on lg inside right pane) */}
-      <div className="hidden lg:flex mb-6 items-end justify-between gap-6 flex-wrap">
-        <h2 className="text-3xl font-serif text-stone-900 tracking-tight">Account Ledger</h2>
-        <div className="flex flex-wrap gap-6 xl:gap-8 bg-white px-6 py-4 rounded-3xl shadow-sm border border-stone-100 shrink-0">
-          <div><p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Stitched</p><p className="text-2xl font-serif text-stone-900">{totals.pieces}</p></div>
-          <div className="w-px bg-stone-100 hidden sm:block"></div>
-          <div><p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Value</p><p className="text-2xl font-serif text-stone-900">₹{totals.earned.toLocaleString()}</p></div>
-          <div className="w-px bg-stone-100 hidden sm:block"></div>
-          <div><p className="text-[10px] font-bold text-emerald-600/70 uppercase tracking-widest mb-1">Paid</p><p className="text-2xl font-serif text-emerald-700">₹{totals.paid.toLocaleString()}</p></div>
+    <div className="animate-in fade-in slide-in-from-bottom-4 max-w-4xl mx-auto mt-4">
+      <div className="mb-8 pb-6 border-b border-stone-200 flex flex-col sm:flex-row sm:items-end justify-between gap-6">
+        <div>
+          <h2 className="text-2xl sm:text-3xl font-serif text-stone-900 tracking-tight">Account Ledger</h2>
+          <p className="text-stone-500 text-sm mt-1">Full history of production and payments.</p>
+        </div>
+        <div className="flex flex-wrap gap-4 sm:gap-6 bg-white px-5 py-3.5 rounded-2xl shadow-sm border border-stone-200 shrink-0">
+          <div><p className="text-[9px] font-bold text-stone-400 uppercase tracking-widest mb-0.5">Stitched</p><p className="text-xl font-serif text-stone-900">{totals.pieces}</p></div>
+          <div className="w-px bg-stone-100"></div>
+          <div><p className="text-[9px] font-bold text-stone-400 uppercase tracking-widest mb-0.5">Value</p><p className="text-xl font-serif text-stone-900">₹{totals.earned.toLocaleString()}</p></div>
+          <div className="w-px bg-stone-100"></div>
+          <div><p className="text-[9px] font-bold text-emerald-600/70 uppercase tracking-widest mb-0.5">Paid</p><p className="text-xl font-serif text-emerald-700">₹{totals.paid.toLocaleString()}</p></div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between mb-4 bg-white p-2 pl-4 rounded-2xl border border-stone-200 shadow-sm">
-        <span className="text-xs font-bold text-stone-500 uppercase tracking-widest">Filter:</span>
-        <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-stone-100 text-stone-900 font-medium py-2 px-4 rounded-xl text-sm focus:ring-2 focus:ring-stone-900 outline-none cursor-pointer">
+      <div className="flex items-center justify-between mb-6 bg-white p-2.5 pl-5 rounded-2xl border border-stone-200 shadow-sm">
+        <span className="text-xs font-bold text-stone-500 uppercase tracking-widest">Filter Records:</span>
+        <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-stone-50 border border-stone-100 text-stone-900 font-medium py-2.5 px-4 rounded-xl text-sm focus:ring-2 focus:ring-stone-900 outline-none cursor-pointer hover:bg-stone-100 transition-colors">
           <option value="All">All Tailors combined</option>
           {tailors.map(t => <option key={t} value={t}>{t}'s Ledger</option>)}
         </select>
       </div>
 
       {filteredEntries.length === 0 ? (
-        <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-stone-300">
+        <div className="text-center py-24 bg-white rounded-3xl border border-dashed border-stone-300">
           <FileText size={48} className="mx-auto text-stone-200 mb-4" />
           <p className="text-stone-500 font-medium font-serif text-lg">No records found.</p>
         </div>
       ) : (
         <div className="space-y-3">
           {filteredEntries.map(entry => (
-            <div key={entry.id} className="group relative bg-white p-4 sm:p-5 rounded-2xl border border-stone-100 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 overflow-hidden">
+            <div key={entry.id} className="group relative bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 overflow-hidden">
               <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${entry.type === 'production' ? 'bg-stone-800' : 'bg-emerald-500'}`}></div>
               <div className="pl-3 flex-1">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[11px] font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded-md">{entry.tailor}</span>
+                  <span className="text-[11px] font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded-md border border-stone-200">{entry.tailor}</span>
                   <span className="text-[11px] font-medium text-stone-400 uppercase tracking-wider">{entry.date}</span>
                 </div>
                 {entry.type === 'production' ? (
                   <>
-                    <h4 className="text-base font-serif font-medium text-stone-800 mb-0.5">{entry.product}</h4>
-                    <div className="flex flex-wrap gap-1 text-[11px] text-stone-500">
-                      <span className="font-medium text-stone-600">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</span>
-                      <span className="text-stone-300">•</span>
+                    <h4 className="text-base font-serif font-medium text-stone-800 mb-1">{entry.product}</h4>
+                    <div className="flex flex-wrap gap-1.5 text-[11px] text-stone-500">
+                      <span className="font-medium text-stone-600 bg-stone-50 px-1.5 py-0.5 rounded border border-stone-100">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</span>
+                      <span className="text-stone-300 self-center">•</span>
                       {Object.entries(entry.sizes).filter(([_, q]) => q > 0).map(([s, q]) => (
-                        <span key={s} className="bg-stone-50 border border-stone-200 px-1.5 rounded">{s}:{q}</span>
+                        <span key={s} className="bg-stone-50 border border-stone-200 px-1.5 py-0.5 rounded text-stone-500">{s}:{q}</span>
                       ))}
                     </div>
                   </>
                 ) : (
-                  <h4 className="text-sm font-medium text-emerald-700 flex flex-col gap-0.5">
-                    <span className="flex items-center gap-1.5"><Wallet size={14} /> Cash Payout</span>
-                    {entry.note && <span className="text-xs text-stone-500 font-normal">{entry.note}</span>}
+                  <h4 className="text-sm font-medium text-emerald-700 flex flex-col gap-1 mt-1">
+                    <span className="flex items-center gap-1.5"><Wallet size={16} /> Cash Payout</span>
+                    {entry.note && <span className="text-[11px] text-stone-500 font-normal bg-stone-50 px-2 py-1 rounded w-fit border border-stone-100">{entry.note}</span>}
                   </h4>
                 )}
               </div>
-              <div className="pl-3 sm:pl-0 flex flex-row sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 border-stone-100 pt-2 sm:pt-0">
-                <p className={`text-xl font-serif tracking-tight ${entry.type === 'production' ? 'text-stone-900' : 'text-emerald-600'}`}>
+              <div className="pl-3 sm:pl-0 flex flex-row sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 border-stone-100 pt-3 sm:pt-0 mt-2 sm:mt-0">
+                <p className={`text-xl sm:text-2xl font-serif tracking-tight ${entry.type === 'production' ? 'text-stone-900' : 'text-emerald-600'}`}>
                   {entry.type === 'production' ? '+' : '-'}₹{entry.amount.toLocaleString()}
                 </p>
-                <button onClick={() => setDeleteModalId(entry.id)} className="text-stone-300 hover:text-rose-500 p-1.5 -mr-1.5 rounded-full transition-all sm:opacity-0 group-hover:opacity-100">
+                <button onClick={() => setDeleteModalId(entry.id)} className="text-stone-300 hover:text-rose-500 p-2 -mr-2 rounded-full transition-all sm:opacity-0 group-hover:opacity-100 hover:bg-rose-50">
                   <Trash2 size={16} />
                 </button>
               </div>
@@ -469,23 +479,23 @@ export default function App() {
   );
 
   const renderReports = () => (
-    <div className="animate-in fade-in slide-in-from-bottom-4">
-      <div className="hidden lg:flex mb-6 items-end justify-between gap-6">
+    <div className="animate-in fade-in slide-in-from-bottom-4 max-w-4xl mx-auto mt-4">
+      <div className="mb-8 pb-6 border-b border-stone-200 flex flex-col sm:flex-row sm:items-end justify-between gap-6">
         <div>
-          <h2 className="text-3xl font-serif text-stone-900 tracking-tight">Thursday Settlements</h2>
-          <p className="text-stone-500 text-sm mt-1">Automatically grouped Friday-Thursday cycles.</p>
+          <h2 className="text-2xl sm:text-3xl font-serif text-stone-900 tracking-tight">Thursday Settlements</h2>
+          <p className="text-stone-500 text-sm mt-1">Automated Friday-Thursday payout cycles.</p>
         </div>
       </div>
-      <div className="flex items-center justify-between mb-4 bg-white p-2 pl-4 rounded-2xl border border-stone-200 shadow-sm">
-        <span className="text-xs font-bold text-stone-500 uppercase tracking-widest">Filter:</span>
-        <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-stone-100 text-stone-900 font-medium py-2 px-4 rounded-xl text-sm focus:ring-2 focus:ring-stone-900 outline-none cursor-pointer">
+      <div className="flex items-center justify-between mb-6 bg-white p-2.5 pl-5 rounded-2xl border border-stone-200 shadow-sm">
+        <span className="text-xs font-bold text-stone-500 uppercase tracking-widest">Filter Tailor:</span>
+        <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-stone-50 border border-stone-100 text-stone-900 font-medium py-2.5 px-4 rounded-xl text-sm focus:ring-2 focus:ring-stone-900 outline-none cursor-pointer hover:bg-stone-100 transition-colors">
           <option value="All">All Tailors combined</option>
           {tailors.map(t => <option key={t} value={t}>{t}'s Reports</option>)}
         </select>
       </div>
 
       {weeklyReports.length === 0 ? (
-         <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-stone-300">
+         <div className="text-center py-24 bg-white rounded-3xl border border-dashed border-stone-300">
            <p className="text-stone-500 font-medium font-serif text-lg">No production logged yet.</p>
          </div>
       ) : (
@@ -493,30 +503,30 @@ export default function App() {
           {weeklyReports.map((week, idx) => {
             const netPay = week.earned - week.paid;
             return (
-              <div key={idx} className="bg-white rounded-3xl border border-stone-200 shadow-sm overflow-hidden">
-                <div className="bg-stone-50 px-5 sm:px-6 py-4 border-b border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <span className="text-base font-bold text-stone-900">{week.label}</span>
-                  <span className="text-[10px] w-fit font-bold uppercase tracking-widest text-stone-500 bg-white px-3 py-1 rounded-full border border-stone-200">
+              <div key={idx} className="bg-white rounded-3xl border border-stone-200 shadow-sm overflow-hidden transition-all hover:shadow-md">
+                <div className="bg-stone-50 px-5 sm:px-8 py-4 border-b border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <span className="text-base font-bold text-stone-900 flex items-center gap-2"><Calendar size={16} className="text-stone-400"/> {week.label}</span>
+                  <span className="text-[10px] w-fit font-bold uppercase tracking-widest text-stone-500 bg-white px-3 py-1.5 rounded-full border border-stone-200 shadow-sm">
                     {week.pieces} Pieces Total
                   </span>
                 </div>
-                <div className="p-5 sm:p-6 grid grid-cols-2 gap-4 sm:gap-8 bg-white">
+                <div className="p-5 sm:p-8 grid grid-cols-2 gap-4 sm:gap-12 bg-white">
                   <div>
-                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><TrendingUp size={12} className="text-stone-500"/> Value Generated</p>
-                    <p className="text-xl sm:text-2xl font-serif text-stone-900">₹{week.earned.toLocaleString()}</p>
+                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><TrendingUp size={14} className="text-stone-500"/> Value Generated</p>
+                    <p className="text-2xl sm:text-3xl font-serif text-stone-900">₹{week.earned.toLocaleString()}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><TrendingDown size={12} className="text-stone-500"/> Advances Paid</p>
-                    <p className="text-xl sm:text-2xl font-serif text-stone-400">- ₹{week.paid.toLocaleString()}</p>
+                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2 flex items-center gap-1.5"><TrendingDown size={14} className="text-stone-500"/> Advances Paid</p>
+                    <p className="text-2xl sm:text-3xl font-serif text-stone-400">- ₹{week.paid.toLocaleString()}</p>
                   </div>
                 </div>
-                <div className={`px-5 sm:px-6 py-4 sm:py-5 flex items-center justify-between border-t border-stone-100 ${netPay > 0 ? 'bg-[#faf7f5]' : netPay < 0 ? 'bg-emerald-50/50' : 'bg-stone-50'}`}>
+                <div className={`px-5 sm:px-8 py-5 sm:py-6 flex items-center justify-between border-t border-stone-100 ${netPay > 0 ? 'bg-rose-50/50' : netPay < 0 ? 'bg-emerald-50/50' : 'bg-stone-50'}`}>
                   <div>
-                    <span className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest block mb-0.5 ${netPay > 0 ? 'text-amber-800' : 'text-stone-600'}`}>
+                    <span className={`text-[11px] sm:text-xs font-bold uppercase tracking-widest block mb-0.5 ${netPay > 0 ? 'text-rose-800' : 'text-stone-600'}`}>
                       {netPay > 0 ? 'Pending Weekly Payout' : netPay < 0 ? 'Overpaid / Advance Carryover' : 'Fully Settled'}
                     </span>
                   </div>
-                  <span className={`text-2xl sm:text-3xl font-serif tracking-tight ${netPay > 0 ? 'text-rose-700' : netPay < 0 ? 'text-emerald-700' : 'text-stone-900'}`}>
+                  <span className={`text-3xl sm:text-4xl font-serif tracking-tight ${netPay > 0 ? 'text-rose-700' : netPay < 0 ? 'text-emerald-700' : 'text-stone-900'}`}>
                     ₹{Math.abs(netPay).toLocaleString()}
                   </span>
                 </div>
@@ -529,36 +539,38 @@ export default function App() {
   );
 
   const renderSettings = () => (
-    <div className="animate-in fade-in slide-in-from-bottom-4">
-      <div className="hidden lg:block mb-6">
-        <h2 className="text-3xl font-serif text-stone-900 tracking-tight">App Configuration</h2>
+    <div className="animate-in fade-in slide-in-from-bottom-4 max-w-4xl mx-auto mt-4">
+      <div className="mb-8 pb-6 border-b border-stone-200">
+        <h2 className="text-2xl sm:text-3xl font-serif text-stone-900 tracking-tight">App Configuration</h2>
         <p className="text-stone-500 text-sm mt-1">Manage your team and product catalog.</p>
       </div>
-      <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-6 md:p-8 space-y-6">
-        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex gap-3 text-sm text-amber-900">
-          <AlertCircle size={20} className="shrink-0 text-amber-600" />
-          <p>Paste items directly from Excel or CSV. Enter one item per line. Cloud sync updates all devices instantly.</p>
+      <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-6 sm:p-8 space-y-8">
+        <div className="bg-amber-50 border border-amber-100 rounded-2xl p-5 flex gap-4 text-sm text-amber-900 items-start">
+          <AlertCircle size={20} className="shrink-0 text-amber-600 mt-0.5" />
+          <p className="leading-relaxed">Paste items directly from Excel or CSV. Enter one item per line. Clicking save will instantly update dropdowns across all devices.</p>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div>
-            <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest mb-2 ml-1">Tailor Team</label>
-            <textarea value={settingsForm.tailorsText} onChange={(e) => setSettingsForm({...settingsForm, tailorsText: e.target.value})} className="w-full p-4 bg-stone-50 border border-stone-200 rounded-2xl text-sm focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none h-48 font-mono leading-relaxed transition-all" placeholder="Sajid&#10;Imran"/>
+            <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest mb-3 ml-1">Tailor Team</label>
+            <textarea value={settingsForm.tailorsText} onChange={(e) => setSettingsForm({...settingsForm, tailorsText: e.target.value})} className="w-full p-5 bg-stone-50 border border-stone-200 rounded-2xl text-sm focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none h-64 font-mono leading-relaxed transition-all resize-none shadow-inner" placeholder="Sajid&#10;Imran"/>
           </div>
           <div>
-            <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest mb-2 ml-1">Product Catalog</label>
-            <textarea value={settingsForm.productsText} onChange={(e) => setSettingsForm({...settingsForm, productsText: e.target.value})} className="w-full p-4 bg-stone-50 border border-stone-200 rounded-2xl text-sm focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none h-48 font-mono leading-relaxed transition-all" placeholder="Wrap Around Dress&#10;Kalamkari Top"/>
+            <label className="block text-xs font-bold text-stone-500 uppercase tracking-widest mb-3 ml-1">Product Catalog</label>
+            <textarea value={settingsForm.productsText} onChange={(e) => setSettingsForm({...settingsForm, productsText: e.target.value})} className="w-full p-5 bg-stone-50 border border-stone-200 rounded-2xl text-sm focus:bg-white focus:border-stone-900 focus:ring-1 focus:ring-stone-900 outline-none h-64 font-mono leading-relaxed transition-all resize-none shadow-inner" placeholder="Wrap Around Dress&#10;Kalamkari Top"/>
           </div>
         </div>
-        <button onClick={saveSettings} className="w-full py-4 bg-stone-900 hover:bg-stone-800 text-white font-medium rounded-2xl shadow-lg shadow-stone-900/20 transition-all text-base">
-          Save Configuration to Cloud
-        </button>
+        <div className="pt-4 border-t border-stone-100">
+          <button onClick={saveSettings} className="w-full py-4 bg-stone-900 hover:bg-stone-800 text-white font-medium rounded-2xl shadow-lg shadow-stone-900/20 transition-all text-base flex justify-center items-center gap-2">
+            <CheckCircle2 size={20}/> Save Configuration to Cloud
+          </button>
+        </div>
       </div>
     </div>
   );
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F9F8F6] flex flex-col items-center justify-center text-stone-500">
+      <div className="flex h-screen bg-[#F9F8F6] flex-col items-center justify-center text-stone-500">
         <div className="w-12 h-12 border-4 border-stone-200 border-t-stone-800 rounded-full animate-spin mb-6"></div>
         <p className="font-serif italic text-lg tracking-wide text-stone-800">Loading Poshakh...</p>
       </div>
@@ -566,11 +578,11 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F9F8F6] text-stone-900 font-sans pb-24 lg:pb-8 selection:bg-stone-200 flex flex-col">
+    <div className="flex h-screen bg-[#F9F8F6] text-stone-900 font-sans selection:bg-stone-200 overflow-hidden">
       
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full shadow-lg flex items-center gap-2 text-sm font-medium animate-in fade-in slide-in-from-top-4 border ${toast.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-stone-900 border-stone-800 text-white'}`}>
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-lg flex items-center gap-2 text-sm font-medium animate-in fade-in slide-in-from-top-4 border ${toast.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-stone-900 border-stone-800 text-white'}`}>
           {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
           {toast.msg}
         </div>
@@ -578,10 +590,10 @@ export default function App() {
 
       {/* Delete Confirmation Modal */}
       {deleteModalId && (
-        <div className="fixed inset-0 z-50 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-[100] bg-stone-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white rounded-3xl p-6 md:p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95">
             <h3 className="text-xl font-serif font-bold text-stone-900 mb-2">Delete Record?</h3>
-            <p className="text-sm text-stone-500 mb-8">This action cannot be undone. It will affect your ledger and settlement reports.</p>
+            <p className="text-sm text-stone-500 mb-8">This action cannot be undone. It will permanently alter your ledger and settlement reports.</p>
             <div className="flex gap-3">
               <button onClick={() => setDeleteModalId(null)} className="flex-1 py-3 bg-stone-100 hover:bg-stone-200 text-stone-800 font-medium rounded-xl transition-all">Cancel</button>
               <button onClick={confirmDelete} className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white font-medium rounded-xl transition-all">Delete</button>
@@ -590,78 +602,74 @@ export default function App() {
         </div>
       )}
 
-      {/* Premium Header */}
-      <header className="bg-white px-4 md:px-8 py-4 border-b border-stone-200 sticky top-0 z-40 shadow-sm flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-stone-900 flex items-center justify-center text-white shrink-0">
-            <Scissors size={18} />
-          </div>
-          <div>
-            <h1 className="text-xl font-serif font-semibold tracking-tight text-stone-900 leading-tight">Poshakh</h1>
-            <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 font-bold tracking-wider uppercase">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div> App Ledger Synced
+      {/* --- DESKTOP SIDEBAR --- */}
+      <aside className="hidden lg:flex w-72 lg:w-80 flex-col bg-white border-r border-stone-200 z-20 shrink-0 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+        <div className="p-6 border-b border-stone-200">
+          <div className="flex items-center gap-3 mb-8 mt-2">
+            <div className="w-10 h-10 rounded-xl bg-stone-900 flex items-center justify-center text-white shrink-0 shadow-sm">
+              <Scissors size={20} />
             </div>
+            <div>
+              <h1 className="text-xl font-serif font-bold tracking-tight text-stone-900 leading-tight">Poshakh</h1>
+              <div className="flex items-center gap-1.5 text-[9px] text-emerald-700 font-bold tracking-wider uppercase mt-0.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div> App Ledger Synced
+              </div>
+            </div>
+          </div>
+          <div className="bg-stone-50 p-5 rounded-2xl border border-stone-100 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+              <Wallet size={48} />
+            </div>
+            <p className="text-[10px] text-stone-500 font-bold uppercase tracking-widest mb-1">Total Pending Pay</p>
+            <p className={`text-3xl font-serif tracking-tight ${pendingBalance > 0 ? 'text-rose-700' : 'text-stone-900'}`}>
+              ₹{pendingBalance.toLocaleString()}
+            </p>
           </div>
         </div>
         
-        {/* Universal Pending Balance Indicator */}
-        <div className="text-right bg-stone-50 px-4 py-1.5 rounded-2xl border border-stone-100">
-          <p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mb-0.5">Total Pending Pay</p>
-          <p className={`text-xl font-serif tracking-tight ${pendingBalance > 0 ? 'text-rose-700' : 'text-stone-900'}`}>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-3 ml-4 mt-2">Data Entry</div>
+          <NavItem view="log" icon={Shirt} label="Log Stitched Batch" />
+          <NavItem view="pay" icon={CreditCard} label="Record Payout" />
+
+          <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-3 ml-4 mt-8">Management</div>
+          <NavItem view="ledger" icon={List} label="Account Ledger" />
+          <NavItem view="reports" icon={BarChart3} label="Settlements" />
+          <NavItem view="settings" icon={Settings} label="App Setup" />
+        </div>
+      </aside>
+
+      {/* --- MOBILE HEADER --- */}
+      <header className="lg:hidden bg-white px-4 py-4 border-b border-stone-200 z-20 shadow-sm flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-stone-900 flex items-center justify-center text-white shrink-0">
+            <Scissors size={18} />
+          </div>
+          <div>
+            <h1 className="text-lg font-serif font-bold tracking-tight text-stone-900 leading-none">Poshakh</h1>
+          </div>
+        </div>
+        <div className="text-right bg-stone-50 px-3 py-1.5 rounded-xl border border-stone-100">
+          <p className="text-[9px] text-stone-500 font-bold uppercase tracking-widest mb-0.5">Pending Pay</p>
+          <p className={`text-base font-serif tracking-tight leading-none ${pendingBalance > 0 ? 'text-rose-700' : 'text-stone-900'}`}>
             ₹{pendingBalance.toLocaleString()}
           </p>
         </div>
       </header>
 
-      {/* --- DESKTOP LAYOUT (Side-by-Side) --- */}
-      <main className="hidden lg:grid grid-cols-12 max-w-7xl mx-auto w-full px-6 py-8 gap-8 xl:gap-12 items-start flex-1">
-        
-        {/* Left Sidebar: Forms */}
-        <div className="col-span-4 shrink-0 sticky top-28 space-y-4">
-          <div className="bg-stone-200/50 p-1.5 rounded-2xl flex gap-1">
-            <button onClick={() => setDesktopFormTab('log')} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${desktopFormTab === 'log' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
-              <Shirt size={16}/> Log Batch
-            </button>
-            <button onClick={() => setDesktopFormTab('pay')} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${desktopFormTab === 'pay' ? 'bg-white text-emerald-700 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
-              <CreditCard size={16}/> Add Pay
-            </button>
-          </div>
-          {desktopFormTab === 'log' ? renderLogForm() : renderPayForm()}
-        </div>
-
-        {/* Right Main Area: Data Views */}
-        <div className="col-span-8 min-w-0 flex flex-col gap-6">
-          <div className="bg-white border border-stone-200 p-1.5 rounded-full flex gap-1 shadow-sm self-start w-full max-w-lg">
-            {[
-              { id: 'ledger', icon: List, label: 'Ledger' },
-              { id: 'reports', icon: BarChart3, label: 'Settlements' },
-              { id: 'settings', icon: Settings, label: 'Setup' }
-            ].map(tab => (
-              <button key={tab.id} onClick={() => setDesktopViewTab(tab.id)} className={`flex-1 py-2.5 px-4 text-sm font-bold rounded-full transition-all flex items-center justify-center gap-2 ${desktopViewTab === tab.id ? 'bg-stone-900 text-white shadow-md' : 'bg-transparent text-stone-500 hover:text-stone-800 hover:bg-stone-50'}`}>
-                <tab.icon size={16}/> {tab.label}
-              </button>
-            ))}
-          </div>
-          
-          <div className="pb-12">
-            {desktopViewTab === 'ledger' && renderLedger()}
-            {desktopViewTab === 'reports' && renderReports()}
-            {desktopViewTab === 'settings' && renderSettings()}
-          </div>
+      {/* --- MAIN CONTENT AREA --- */}
+      <main className="flex-1 overflow-y-auto z-10 relative scroll-smooth">
+        <div className="min-h-full p-4 sm:p-6 lg:p-10 pb-32 lg:pb-12 max-w-6xl mx-auto">
+          {currentView === 'log' && renderLogForm()}
+          {currentView === 'pay' && renderPayForm()}
+          {currentView === 'ledger' && renderLedger()}
+          {currentView === 'reports' && renderReports()}
+          {currentView === 'settings' && renderSettings()}
         </div>
       </main>
 
-      {/* --- MOBILE LAYOUT (Tabbed) --- */}
-      <main className="lg:hidden p-4 sm:p-6 flex-1">
-        {mobileTab === 'log' && renderLogForm()}
-        {mobileTab === 'pay' && renderPayForm()}
-        {mobileTab === 'ledger' && renderLedger()}
-        {mobileTab === 'reports' && renderReports()}
-        {mobileTab === 'settings' && renderSettings()}
-      </main>
-
-      {/* Mobile Fixed Bottom Navigation */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex justify-between px-2 pb-safe pt-2 z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.04)]">
+      {/* --- MOBILE BOTTOM NAV --- */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 flex justify-between px-1 sm:px-4 pb-safe pt-2 z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.04)]">
         {[
           { id: 'log', icon: Plus, label: 'Batch' },
           { id: 'pay', icon: Wallet, label: 'Pay' },
@@ -671,13 +679,13 @@ export default function App() {
         ].map(tab => (
           <button 
             key={tab.id} 
-            onClick={() => setMobileTab(tab.id)}
-            className={`flex-1 flex flex-col items-center justify-center py-2 px-1 mb-2 gap-1 rounded-xl transition-all ${mobileTab === tab.id ? 'text-stone-900' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-50'}`}
+            onClick={() => setCurrentView(tab.id)}
+            className={`flex-1 flex flex-col items-center justify-center py-2 px-1 mb-2 gap-1 rounded-2xl transition-all ${currentView === tab.id ? 'text-stone-900' : 'text-stone-400 hover:text-stone-600'}`}
           >
-            <div className={`p-1.5 rounded-full transition-all ${mobileTab === tab.id ? 'bg-stone-100' : 'bg-transparent'}`}>
-              <tab.icon size={20} strokeWidth={mobileTab === tab.id ? 2.5 : 2} />
+            <div className={`p-2 rounded-xl transition-all ${currentView === tab.id ? 'bg-stone-100 scale-110' : 'bg-transparent'}`}>
+              <tab.icon size={20} strokeWidth={currentView === tab.id ? 2.5 : 2} />
             </div>
-            <span className={`text-[10px] font-bold ${mobileTab === tab.id ? 'text-stone-900' : 'text-stone-400'}`}>{tab.label}</span>
+            <span className={`text-[10px] font-bold ${currentView === tab.id ? 'text-stone-900' : 'text-stone-400'}`}>{tab.label}</span>
           </button>
         ))}
       </nav>
