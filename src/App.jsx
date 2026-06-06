@@ -11,7 +11,6 @@ import {
   deleteDoc, doc, setDoc, updateDoc
 } from 'firebase/firestore';
 
-// Your Real Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyBciTbw1cvMD6au0PZw7k-rfdRlUNHea18",
   authDomain: "tailordaily.firebaseapp.com",
@@ -26,21 +25,19 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 export default function App() {
-  // --- CORE STATE ---
   const [entries, setEntries] = useState([]);
   const [tailors, setTailors] = useState(["Sajid", "Imran"]);
-  // Products are now objects to support images: { name: "...", image: "..." }
   const [products, setProducts] = useState([
-    { name: "Wrap Around Dress", image: "" }, 
-    { name: "Kalamkari Top", image: "" }
+    { name: "Wrap Around Dress", image: null },
+    { name: "Kalamkari Top", image: null }
   ]);
   
-  // UI & Network State
   const [activeTab, setActiveTab] = useState('ledger');
   const [selectedTailorFilter, setSelectedTailorFilter] = useState('All');
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
-  const [useLocalMode, setUseLocalMode] = useState(false); 
+  const [useLocalMode, setUseLocalMode] = useState(false);
+  const [showLocalOverride, setShowLocalOverride] = useState(false);
   
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -73,36 +70,40 @@ export default function App() {
     tailor: 'All'
   });
 
+  const [signOffDate, setSignOffDate] = useState(new Date().toISOString().split('T')[0]);
+
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
   useEffect(() => {
+    const style = document.createElement('style');
+    style.innerHTML = `
+      #root { max-width: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+      body, html { width: 100%; margin: 0; padding: 0; overflow-x: hidden; background-color: #0a0a0a; }
+      .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: #111; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
+    `;
+    document.head.appendChild(style);
+
     let unsubscribeLedger;
     let unsubscribeConfig;
+    let fallbackTimer;
 
     const loadLocalData = () => {
+      console.log("Loading Local Fallback Data");
       const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
       const localConfig = JSON.parse(localStorage.getItem('poshakh_config') || 'null');
       
       setEntries(localLedger);
       if (localConfig) {
         setTailors(localConfig.tailors || []);
-        
-        // Handle legacy string arrays or new object arrays
-        let loadedProducts = [];
-        if (localConfig.products && localConfig.products.length > 0) {
-           if (typeof localConfig.products[0] === 'string') {
-               loadedProducts = localConfig.products.map(p => ({ name: p, image: '' }));
-           } else {
-               loadedProducts = localConfig.products;
-           }
-        }
-        setProducts(loadedProducts);
-
+        setProducts(localConfig.products || []);
         setSetupForm({
           tailorsText: (localConfig.tailors || []).join('\n'),
-          productsText: loadedProducts.map(p => p.image ? `${p.name}\t${p.image}` : p.name).join('\n')
+          productsText: (localConfig.products || []).map(p => p.image ? `${p.name}\t${p.image}` : p.name).join('\n')
         });
       } else {
         setSetupForm({
@@ -110,73 +111,73 @@ export default function App() {
           productsText: products.map(p => p.name).join('\n')
         });
       }
+      setProdForm(prev => ({ ...prev, tailor: localConfig?.tailors?.[0] || tailors[0] || '', product: localConfig?.products?.[0]?.name || products[0]?.name || '' }));
+      setPayForm(prev => ({ ...prev, tailor: localConfig?.tailors?.[0] || tailors[0] || '' }));
       setLoading(false);
     };
 
-    // We bypass auth entirely and query the DB directly since rules are open!
-    try {
-      unsubscribeLedger = onSnapshot(collection(db, 'ledger'), (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        setEntries(data);
-        setUseLocalMode(false);
-        setLoading(false);
-      }, (err) => {
-        console.error("Firebase Read Error:", err);
+    const fetchFirebaseDirectly = () => {
+      try {
+        unsubscribeLedger = onSnapshot(collection(db, 'ledger'), (snapshot) => {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          setEntries(data);
+          clearTimeout(fallbackTimer);
+          setLoading(false);
+        }, (err) => {
+          console.error("Firebase Read Blocked:", err);
+          setUseLocalMode(true);
+          loadLocalData();
+        });
+
+        unsubscribeConfig = onSnapshot(doc(db, 'config', 'setup'), (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setTailors(data.tailors || []);
+            setProducts(data.products || []);
+            setSetupForm({
+              tailorsText: (data.tailors || []).join('\n'),
+              productsText: (data.products || []).map(p => p.image ? `${p.name}\t${p.image}` : p.name).join('\n')
+            });
+            setProdForm(prev => ({ ...prev, tailor: data.tailors?.[0] || '', product: data.products?.[0]?.name || '' }));
+            setPayForm(prev => ({ ...prev, tailor: data.tailors?.[0] || '' }));
+          }
+        }, (err) => {
+          console.error("Firebase Config Blocked:", err);
+        });
+      } catch (err) {
         setUseLocalMode(true);
         loadLocalData();
-      });
+      }
+    };
 
-      unsubscribeConfig = onSnapshot(doc(db, 'config', 'setup'), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setTailors(data.tailors || []);
-          
-          let loadedProducts = [];
-          if (data.products && data.products.length > 0) {
-             if (typeof data.products[0] === 'string') {
-                 loadedProducts = data.products.map(p => ({ name: p, image: '' }));
-             } else {
-                 loadedProducts = data.products;
-             }
-          }
-          setProducts(loadedProducts);
+    fetchFirebaseDirectly();
 
-          setSetupForm({
-            tailorsText: (data.tailors || []).join('\n'),
-            productsText: loadedProducts.map(p => p.image ? `${p.name}\t${p.image}` : p.name).join('\n')
-          });
-          
-          setProdForm(prev => ({ ...prev, tailor: prev.tailor || data.tailors?.[0] || '', product: prev.product || loadedProducts?.[0]?.name || '' }));
-          setPayForm(prev => ({ ...prev, tailor: prev.tailor || data.tailors?.[0] || '' }));
-        }
-      }, (err) => {
-        console.error("Firebase Config Error:", err);
-      });
-
-    } catch (err) {
-      console.error("Connection failed", err);
-      setUseLocalMode(true);
-      loadLocalData();
-    }
-
-    // Try auth quietly in background just in case
-    signInAnonymously(auth).catch(() => {});
+    fallbackTimer = setTimeout(() => {
+      if (loading) setShowLocalOverride(true);
+    }, 4000);
 
     return () => {
       if (unsubscribeLedger) unsubscribeLedger();
       if (unsubscribeConfig) unsubscribeConfig();
+      clearTimeout(fallbackTimer);
     };
   }, []);
 
-  const showToast = (msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
+  const forceLocalMode = () => {
+    setUseLocalMode(true);
+    const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
+    setEntries(localLedger);
+    setLoading(false);
+    showToast("Switched to Local Offline Mode", "error");
   };
 
-  const syncLocal = (key, data) => {
-    localStorage.setItem(key, JSON.stringify(data));
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
   };
+
+  const syncLocal = (key, data) => localStorage.setItem(key, JSON.stringify(data));
 
   const handleProdSizeChange = (size, value) => {
     const numValue = parseInt(value, 10) || 0;
@@ -188,7 +189,7 @@ export default function App() {
 
   const handleProdSubmit = async (e) => {
     e.preventDefault();
-    if (!prodForm.tailor || !prodForm.product) return showToast("Select tailor and product.", "error");
+    if (!prodForm.tailor || !prodForm.product) return showToast("Select a tailor and product.", "error");
 
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
     if (totalPieces === 0) return showToast("Enter at least one piece.", "error");
@@ -206,12 +207,13 @@ export default function App() {
         let newEntries = [...entries];
         if (editingEntryId) {
           newEntries = newEntries.map(e => e.id === editingEntryId ? { ...entryData, id: editingEntryId } : e);
+          showToast("Local log updated!");
         } else {
           newEntries = [{ ...entryData, id: crypto.randomUUID() }, ...newEntries];
+          showToast("Local batch logged!");
         }
         setEntries(newEntries);
         syncLocal('poshakh_ledger', newEntries);
-        showToast(editingEntryId ? "Local log updated!" : "Local batch logged!");
       } else {
         if (editingEntryId) {
           await updateDoc(doc(db, 'ledger', editingEntryId), entryData);
@@ -232,7 +234,6 @@ export default function App() {
   const handlePaySubmit = async (e) => {
     e.preventDefault();
     const payAmount = parseFloat(payForm.amount);
-    
     if (!payForm.tailor || !payAmount || payAmount <= 0) return showToast("Enter valid amount.", "error");
 
     const entryData = {
@@ -254,15 +255,14 @@ export default function App() {
         }
         setEntries(newEntries);
         syncLocal('poshakh_ledger', newEntries);
-        showToast(editingEntryId ? "Local payment updated!" : "Local payment recorded!");
+        showToast("Local payment saved!");
       } else {
         if (editingEntryId) {
           await updateDoc(doc(db, 'ledger', editingEntryId), entryData);
-          showToast("Cloud payment updated!");
         } else {
           await addDoc(collection(db, 'ledger'), entryData);
-          showToast("Cloud payment recorded!");
         }
+        showToast("Cloud payment saved!");
       }
       setEditingEntryId(null);
       setPayForm(prev => ({ ...prev, amount: '', note: '' }));
@@ -278,14 +278,14 @@ export default function App() {
         const newEntries = entries.filter(e => e.id !== id);
         setEntries(newEntries);
         syncLocal('poshakh_ledger', newEntries);
-        showToast("Entry deleted locally.");
+        showToast("Deleted locally.");
       } else {
         await deleteDoc(doc(db, 'ledger', id));
-        showToast("Cloud entry deleted.");
+        showToast("Cloud record deleted.");
       }
       setDeletingId(null);
     } catch (err) {
-      showToast("Failed to delete.", "error");
+      showToast("Delete failed.", "error");
     }
   };
 
@@ -308,32 +308,85 @@ export default function App() {
 
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
-    
-    // Parse Product Name + Image URL (separated by tab or comma)
-    const newProducts = setupForm.productsText.split('\n').filter(p => p.trim()).map(line => {
-      let parts = line.split('\t'); // Excel copy-paste uses tabs
-      if (parts.length === 1) parts = line.split(','); // Fallback to comma
-      return {
-        name: parts[0].trim(),
-        image: parts[1] ? parts[1].trim() : ''
-      };
-    });
+    const newProducts = setupForm.productsText.split('\n').map(line => {
+      const parts = line.split(/[\t,]/);
+      return { name: parts[0]?.trim() || '', image: parts[1]?.trim() || null };
+    }).filter(p => p.name);
 
     try {
       if (useLocalMode) {
         setTailors(newTailors);
         setProducts(newProducts);
         syncLocal('poshakh_config', { tailors: newTailors, products: newProducts });
-        showToast("Configuration saved locally!");
+        showToast("Setup saved locally!");
       } else {
         await setDoc(doc(db, 'config', 'setup'), {
           tailors: newTailors, products: newProducts, updatedAt: new Date().toISOString()
         });
-        showToast("Configuration saved to Cloud!");
+        showToast("Cloud setup saved!");
       }
     } catch (err) {
       showToast("Failed to save setup.", "error");
     }
+  };
+
+  const handleDownloadReport = () => {
+    const filtered = entries.filter(e => {
+      const d = new Date(e.date);
+      const start = new Date(reportForm.startDate);
+      const end = new Date(reportForm.endDate);
+      const dateMatch = d >= start && d <= end;
+      const tailorMatch = reportForm.tailor === 'All' || e.tailor === reportForm.tailor;
+      return dateMatch && tailorMatch;
+    });
+
+    if (filtered.length === 0) return showToast("No data found.", "error");
+
+    let csvContent = "";
+    let filename = `poshakh_${reportForm.type}_${reportForm.startDate}_to_${reportForm.endDate}.csv`;
+
+    if (reportForm.type === 'ledger') {
+      csvContent = "Date,Tailor,Transaction Type,Product,Quantity,Rate,Credit (Earned),Debit (Paid),Notes\n";
+      filtered.forEach(e => {
+        const type = e.type === 'production' ? 'Production' : 'Payment';
+        const product = e.product ? `"${e.product}"` : '';
+        const qty = e.totalPieces || '';
+        const rate = e.pieceRate || '';
+        const credit = e.type === 'production' ? e.amount : '';
+        const debit = e.type === 'payment' ? e.amount : '';
+        const note = e.note ? `"${e.note}"` : '';
+        csvContent += `${e.date},${e.tailor},${type},${product},${qty},${rate},${credit},${debit},${note}\n`;
+      });
+    } else if (reportForm.type === 'settlement') {
+      csvContent = "Tailor,Pieces Stitched,Total Earned,Total Paid,Pending Balance\n";
+      const tailorsSet = reportForm.tailor === 'All' ? tailors : [reportForm.tailor];
+      tailorsSet.forEach(t => {
+        const tEntries = filtered.filter(e => e.tailor === t);
+        const pieces = tEntries.filter(e => e.type === 'production').reduce((sum, e) => sum + e.totalPieces, 0);
+        const earned = tEntries.filter(e => e.type === 'production').reduce((sum, e) => sum + e.amount, 0);
+        const paid = tEntries.filter(e => e.type === 'payment').reduce((sum, e) => sum + e.amount, 0);
+        const pending = earned - paid;
+        if (pieces > 0 || paid > 0) csvContent += `${t},${pieces},${earned},${paid},${pending}\n`;
+      });
+    } else if (reportForm.type === 'production') {
+      csvContent = "Product,Total Pieces Stitched,Total Value\n";
+      const productStats = {};
+      filtered.filter(e => e.type === 'production').forEach(e => {
+        if (!productStats[e.product]) productStats[e.product] = { pieces: 0, value: 0 };
+        productStats[e.product].pieces += e.totalPieces;
+        productStats[e.product].value += e.amount;
+      });
+      Object.entries(productStats).forEach(([prod, stats]) => csvContent += `"${prod}",${stats.pieces},${stats.value}\n`);
+    }
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast("Report Downloaded!");
   };
 
   const startDrawing = (e) => {
@@ -376,105 +429,20 @@ export default function App() {
   }, [filteredEntries]);
 
   const pendingBalance = totals.earned - totals.paid;
-
-  const handleDownloadReport = () => {
-    const filtered = entries.filter(e => {
-      const d = new Date(e.date);
-      const start = new Date(reportForm.startDate);
-      const end = new Date(reportForm.endDate);
-      const dateMatch = d >= start && d <= end;
-      const tailorMatch = reportForm.tailor === 'All' || e.tailor === reportForm.tailor;
-      return dateMatch && tailorMatch;
-    });
-
-    if (filtered.length === 0) {
-      return showToast("No data found for this date range.", "error");
-    }
-
-    let csvContent = "";
-    let filename = `poshakh_${reportForm.type}_${reportForm.startDate}_to_${reportForm.endDate}.csv`;
-
-    if (reportForm.type === 'ledger') {
-      csvContent = "Date,Tailor,Transaction Type,Product,Quantity,Rate,Credit (Earned),Debit (Paid),Notes\n";
-      filtered.forEach(e => {
-        const type = e.type === 'production' ? 'Production' : 'Payment';
-        const product = e.product ? `"${e.product}"` : '';
-        const qty = e.totalPieces || '';
-        const rate = e.pieceRate || '';
-        const credit = e.type === 'production' ? e.amount : '';
-        const debit = e.type === 'payment' ? e.amount : '';
-        const note = e.note ? `"${e.note}"` : '';
-        csvContent += `${e.date},${e.tailor},${type},${product},${qty},${rate},${credit},${debit},${note}\n`;
-      });
-    } else if (reportForm.type === 'settlement') {
-      csvContent = "Tailor,Pieces Stitched,Total Earned,Total Paid,Pending Balance\n";
-      const tailorsSet = reportForm.tailor === 'All' ? tailors : [reportForm.tailor];
-      tailorsSet.forEach(t => {
-        const tEntries = filtered.filter(e => e.tailor === t);
-        const pieces = tEntries.filter(e => e.type === 'production').reduce((sum, e) => sum + e.totalPieces, 0);
-        const earned = tEntries.filter(e => e.type === 'production').reduce((sum, e) => sum + e.amount, 0);
-        const paid = tEntries.filter(e => e.type === 'payment').reduce((sum, e) => sum + e.amount, 0);
-        const pending = earned - paid;
-        if (pieces > 0 || paid > 0) {
-          csvContent += `${t},${pieces},${earned},${paid},${pending}\n`;
-        }
-      });
-    } else if (reportForm.type === 'production') {
-      csvContent = "Product,Total Pieces Stitched,Total Value\n";
-      const productStats = {};
-      filtered.filter(e => e.type === 'production').forEach(e => {
-        if (!productStats[e.product]) productStats[e.product] = { pieces: 0, value: 0 };
-        productStats[e.product].pieces += e.totalPieces;
-        productStats[e.product].value += e.amount;
-      });
-      Object.entries(productStats).forEach(([prod, stats]) => {
-        csvContent += `"${prod}",${stats.pieces},${stats.value}\n`;
-      });
-    }
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast("Report Downloaded Successfully!");
-  };
-
-  // Find image for current selected product in Add Batch
-  const currentSelectedProductImage = useMemo(() => {
-    const prodObj = products.find(p => p.name === prodForm.product);
-    return prodObj ? prodObj.image : '';
-  }, [prodForm.product, products]);
+  const currentSelectedProductImage = products.find(p => p.name === prodForm.product)?.image;
 
   const renderLedger = () => (
-    <div className="w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="w-full space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-2xl md:text-3xl font-bold text-white tracking-tight">Financial Overview</h2>
-          <p className="text-gray-400 text-sm mt-1">Real-time ledger and balances.</p>
-        </div>
-        <select 
-          value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)}
-          className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none"
-        >
-          <option value="All">All Tailors Combined</option>
-          {tailors.map(t => <option key={t} value={t}>{t} Only</option>)}
+        <div><h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">Financial Overview</h2><p className="text-gray-400 text-sm mt-1">Real-time ledger and balances.</p></div>
+        <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">
+          <option value="All">All Tailors Combined</option>{tailors.map(t => <option key={t} value={t}>{t} Only</option>)}
         </select>
       </div>
 
       <div className="bg-[#cdfc4c] rounded-2xl p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between shadow-xl">
-        <div>
-          <div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Total Pending Payout</div>
-          <div className="text-5xl md:text-7xl font-black text-black tracking-tighter">₹{pendingBalance.toLocaleString()}</div>
-        </div>
-        <div className="mt-6 md:mt-0 md:text-right">
-           <div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Pieces Stitched</div>
-           <div className="text-2xl md:text-3xl font-bold text-black">{totals.pieces} <span className="text-lg font-medium opacity-60">Items</span></div>
-        </div>
+        <div><div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Total Pending Payout</div><div className="text-5xl md:text-7xl font-black text-black tracking-tighter">₹{pendingBalance.toLocaleString()}</div></div>
+        <div className="mt-6 md:mt-0 md:text-right"><div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Pieces Stitched</div><div className="text-2xl md:text-3xl font-bold text-black">{totals.pieces} <span className="text-lg font-medium opacity-60">Items</span></div></div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -494,70 +462,46 @@ export default function App() {
           ) : (
             <table className="w-full text-sm text-left">
               <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                <tr>
-                  <th className="px-6 py-4">Date</th>
-                  <th className="px-6 py-4">Tailor</th>
-                  <th className="px-6 py-4">Details</th>
-                  <th className="px-6 py-4 text-right">Credit (+)</th>
-                  <th className="px-6 py-4 text-right">Debit (-)</th>
-                  <th className="px-6 py-4 text-right"></th>
-                </tr>
+                <tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Tailor</th><th className="px-6 py-4">Details</th><th className="px-6 py-4 text-right">Credit (+)</th><th className="px-6 py-4 text-right">Debit (-)</th><th className="px-6 py-4 text-right"></th></tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {filteredEntries.map((entry) => {
-                  // Find image for this entry
-                  const prodObj = products.find(p => p.name === entry.product);
-                  const entryImage = prodObj ? prodObj.image : '';
-
+                  const entryImage = products.find(p => p.name === entry.product)?.image;
                   return (
-                    <tr key={entry.id} className="hover:bg-gray-800/30 transition-colors group">
-                      <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
-                      <td className="px-6 py-4 whitespace-nowrap font-bold text-white">{entry.tailor}</td>
-                      <td className="px-6 py-4">
-                        {entry.type === 'production' ? (
-                          <div className="flex items-center gap-3">
-                            {entryImage ? (
-                              <img src={entryImage} alt={entry.product} className="w-10 h-10 rounded-md object-cover border border-gray-700 bg-gray-900" />
-                            ) : (
-                              <div className="w-10 h-10 rounded-md bg-gray-800 border border-gray-700 flex items-center justify-center">
-                                <Shirt size={16} className="text-gray-500" />
-                              </div>
-                            )}
-                            <div>
-                              <div className="text-white font-semibold">{entry.product}</div>
-                              <div className="text-xs text-gray-500 mt-1">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-3">
-                             <div className="w-10 h-10 rounded-md bg-sky-900/30 border border-sky-800/50 flex items-center justify-center">
-                                <Wallet size={16} className="text-sky-400" />
-                             </div>
-                             <div>
-                                <div className="text-sky-400 font-semibold">Cash Payout</div>
-                                {entry.note && <div className="text-xs text-gray-500 mt-1">{entry.note}</div>}
-                             </div>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right font-medium text-white">{entry.type === 'production' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
-                      <td className="px-6 py-4 text-right font-medium text-sky-400">{entry.type === 'payment' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
-                      <td className="px-6 py-4 text-right w-32">
-                        {deletingId === entry.id ? (
-                          <div className="flex justify-end items-center gap-3">
-                            <button onClick={() => deleteEntry(entry.id)} className="text-rose-500 font-bold text-xs bg-rose-500/10 px-3 py-1.5 rounded-lg hover:bg-rose-500/20">Delete</button>
-                            <button onClick={() => setDeletingId(null)} className="text-gray-400 font-bold text-xs hover:text-white">Cancel</button>
-                          </div>
-                        ) : (
-                          <div className="flex justify-end gap-4 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => startEdit(entry)} className="text-gray-400 hover:text-white" title="Edit"><Edit2 size={16} /></button>
-                            <button onClick={() => setDeletingId(entry.id)} className="text-gray-500 hover:text-rose-500" title="Delete"><Trash2 size={16} /></button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                  <tr key={entry.id} className="hover:bg-gray-800/30 transition-colors group">
+                    <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
+                    <td className="px-6 py-4 whitespace-nowrap font-bold text-white">{entry.tailor}</td>
+                    <td className="px-6 py-4">
+                      {entry.type === 'production' ? (
+                        <div className="flex items-center gap-3">
+                           {entryImage ? (
+                             <img src={entryImage} className="w-10 h-10 rounded-lg object-cover border border-gray-700 bg-black shrink-0" />
+                           ) : (
+                             <div className="w-10 h-10 rounded-lg bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>
+                           )}
+                           <div><div className="text-white font-bold">{entry.product}</div><div className="text-xs text-gray-500 mt-0.5">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</div></div>
+                        </div>
+                      ) : (
+                        <div><div className="text-sky-400 font-bold flex items-center gap-1.5"><Wallet size={14} /> Cash Payout</div>{entry.note && <div className="text-xs text-gray-500 mt-1">{entry.note}</div>}</div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-right font-bold text-white">{entry.type === 'production' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
+                    <td className="px-6 py-4 text-right font-bold text-sky-400">{entry.type === 'payment' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
+                    <td className="px-6 py-4 text-right">
+                      {deletingId === entry.id ? (
+                        <div className="flex justify-end items-center gap-3">
+                          <button onClick={() => deleteEntry(entry.id)} className="text-rose-500 font-bold text-xs bg-rose-500/10 px-3 py-1.5 rounded">Delete</button>
+                          <button onClick={() => setDeletingId(null)} className="text-gray-400 font-bold text-xs hover:text-white">Cancel</button>
+                        </div>
+                      ) : (
+                        <div className="flex justify-end gap-3 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => startEdit(entry)} className="text-[#cdfc4c] hover:text-white"><Edit2 size={16} /></button>
+                          <button onClick={() => setDeletingId(entry.id)} className="text-gray-500 hover:text-rose-500"><Trash2 size={16} /></button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )})}
               </tbody>
             </table>
           )}
@@ -598,7 +542,7 @@ export default function App() {
                       <ImageIcon size={16} className="text-gray-600" />
                     </div>
                   )}
-                  <span className="truncate font-medium {prodForm.product ? 'text-white' : 'text-gray-500'}">
+                  <span className={`truncate font-medium ${prodForm.product ? 'text-white' : 'text-gray-500'}`}>
                     {prodForm.product || "Select Product"}
                   </span>
                 </div>
@@ -657,7 +601,7 @@ export default function App() {
               <div className="text-3xl font-black text-white">₹{Object.values(prodForm.sizes).reduce((a, b) => a + b, 0) * prodForm.pieceRate}</div>
             </div>
           </div>
-          <button type="submit" className="w-full py-4 bg-[#cdfc4c] text-black hover:bg-[#b5e638] font-black tracking-wide rounded-xl transition-all shadow-lg shadow-[#cdfc4c]/10">{editingEntryId ? 'Update Batch' : 'Save Batch'}</button>
+          <button type="submit" className="w-full py-4 bg-[#cdfc4c] text-black hover:bg-[#b5e638] font-black tracking-wide rounded-xl transition-all">{editingEntryId ? 'Update Batch' : 'Save Batch'}</button>
         </form>
       </div>
     </div>
@@ -682,7 +626,7 @@ export default function App() {
           </div>
           <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Amount Paid</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-gray-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-gray-800 rounded-xl text-2xl font-bold focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
           <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
-          <button type="submit" className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/10"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm Payment'}</button>
+          <button type="submit" className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm Payment'}</button>
         </form>
       </div>
     </div>
@@ -741,46 +685,86 @@ export default function App() {
   );
 
   const renderSignOff = () => {
-    const today = new Date().toISOString().split('T')[0];
     const targetTailor = selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter;
-    const todaysLog = entries.filter(e => e.tailor === targetTailor && e.date === today && e.type === 'production');
-    const todaysPay = entries.filter(e => e.tailor === targetTailor && e.date === today && e.type === 'payment');
+    const todaysLog = entries.filter(e => e.tailor === targetTailor && e.date === signOffDate && e.type === 'production');
+    const todaysPay = entries.filter(e => e.tailor === targetTailor && e.date === signOffDate && e.type === 'payment');
     const earnedToday = todaysLog.reduce((sum, e) => sum + e.amount, 0);
     const paidToday = todaysPay.reduce((sum, e) => sum + e.amount, 0);
     const piecesToday = todaysLog.reduce((sum, e) => sum + e.totalPieces, 0);
 
+    const formatSizes = (sizes) => {
+      if (!sizes) return '';
+      const activeSizes = Object.entries(sizes).filter(([_, qty]) => qty > 0);
+      if (activeSizes.length === 0) return '-';
+      return activeSizes.map(([size, qty]) => `${size}(${qty})`).join(', ');
+    };
+
     return (
       <div className="w-full max-w-3xl mx-auto pb-12 print:pb-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="print:hidden mb-6 flex items-center justify-between">
-          <select value={selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">{tailors.map(t => <option key={t} value={t}>{t}</option>)}</select>
-          <button onClick={() => window.print()} className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white font-bold transition-colors"><Printer size={16} /> Print</button>
-        </div>
-        <div className="bg-white text-black p-8 md:p-12 rounded-2xl print:p-0 print:w-full print:shadow-none shadow-2xl">
-          <div className="text-center mb-8 border-b-2 border-black pb-6"><h1 className="text-4xl font-black tracking-tighter uppercase mb-2">Poshakh</h1><p className="text-gray-500 font-medium">Daily Production Receipt</p></div>
-          <div className="flex justify-between mb-8 font-mono text-sm border-b border-gray-200 pb-4">
-            <div><div className="text-gray-500 text-xs font-bold uppercase tracking-wider">Date</div><div className="font-bold text-lg">{today}</div></div>
-            <div className="text-right"><div className="text-gray-500 text-xs font-bold uppercase tracking-wider">Tailor</div><div className="font-bold text-lg">{targetTailor}</div></div>
+        <div className="print:hidden mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <select value={selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="w-full md:w-auto bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">{tailors.map(t => <option key={t} value={t}>{t}</option>)}</select>
+            <input type="date" value={signOffDate} onChange={(e) => { setSignOffDate(e.target.value); clearSignature(); }} className="w-full md:w-auto bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
           </div>
+          <button onClick={() => window.print()} className="flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white font-bold transition-colors w-full md:w-auto"><Printer size={16} /> Print</button>
+        </div>
+
+        <div className="bg-white text-black p-8 md:p-12 rounded-2xl print:p-0 print:w-full print:shadow-none shadow-2xl relative overflow-hidden">
+          {/* Subtle top border for screen preview */}
+          <div className="absolute top-0 left-0 w-full h-3 bg-[#022c22] print:hidden"></div>
+          
+          <div className="text-center mb-8 border-b-2 border-dashed border-gray-300 pb-6">
+            <h1 className="text-4xl font-black tracking-tighter uppercase mb-1">Poshakh</h1>
+            <p className="text-gray-500 font-mono text-xs uppercase tracking-widest">Production & Settlement Docket</p>
+          </div>
+          
+          <div className="flex justify-between mb-8 font-mono text-sm border-b border-gray-200 pb-4">
+            <div><div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Date</div><div className="font-bold text-lg">{signOffDate}</div></div>
+            <div className="text-right"><div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Tailor</div><div className="font-bold text-lg">{targetTailor}</div></div>
+          </div>
+          
           <div className="mb-8">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-4">Production Log</h3>
-            {todaysLog.length === 0 ? <p className="text-gray-400 italic">No items logged today.</p> : (
-              <table className="w-full text-sm"><thead className="border-b border-gray-200 text-left"><tr><th className="py-2">Style</th><th className="py-2 text-center">Qty</th><th className="py-2 text-right">Value</th></tr></thead>
-              <tbody className="divide-y divide-gray-100">{todaysLog.map(log => (<tr key={log.id}><td className="py-3">{log.product}</td><td className="py-3 text-center">{log.totalPieces}</td><td className="py-3 text-right">₹{log.amount}</td></tr>))}</tbody></table>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Production Log</h3>
+            {todaysLog.length === 0 ? <p className="text-gray-400 italic font-mono text-sm py-4">No production recorded on this date.</p> : (
+              <table className="w-full text-sm font-mono">
+                <thead className="border-b border-dashed border-gray-300 text-left text-gray-500 text-[10px]">
+                  <tr>
+                    <th className="py-3 font-normal uppercase tracking-widest">Style Details</th>
+                    <th className="py-3 font-normal uppercase tracking-widest text-center">Qty</th>
+                    <th className="py-3 font-normal uppercase tracking-widest text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dashed divide-gray-200">
+                  {todaysLog.map(log => (
+                    <tr key={log.id}>
+                      <td className="py-4 pr-4">
+                        <div className="font-bold text-gray-900 font-sans text-base">{log.product}</div>
+                        <div className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest">Sizes: {formatSizes(log.sizes)}</div>
+                      </td>
+                      <td className="py-4 text-center font-bold text-lg">{log.totalPieces}</td>
+                      <td className="py-4 text-right text-gray-600 text-base">₹{log.amount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-4 mb-12">
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase font-bold text-gray-500">Pieces</div><div className="text-2xl font-black">{piecesToday}</div></div>
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase font-bold text-gray-500">Earned</div><div className="text-2xl font-black text-green-700">₹{earnedToday}</div></div>
+          
+          <div className="grid grid-cols-3 gap-4 mb-8">
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Pieces</div><div className="text-2xl font-black">{piecesToday}</div></div>
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Earned</div><div className="text-2xl font-black text-gray-900">₹{earnedToday}</div></div>
+            <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100"><div className="text-[10px] uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Cash Paid</div><div className="text-2xl font-black text-emerald-700">₹{paidToday}</div></div>
           </div>
+          
           <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-4">Tailor Signature</h3>
-            <div className="bg-gray-100 rounded-lg overflow-hidden border border-gray-300 relative mx-auto w-full max-w-md h-40 print:bg-white print:border-black">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Tailor Signature Authorization</h3>
+            <div className="bg-gray-50 rounded-lg overflow-hidden border border-gray-300 relative mx-auto w-full max-w-md h-40 print:bg-white print:border-black">
                <canvas ref={canvasRef} width={400} height={160} className="w-full h-full cursor-crosshair touch-none" onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseOut={stopDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing} />
-               {!signatureLocked && <div className="absolute inset-0 pointer-events-none flex items-center justify-center text-gray-400 opacity-50 print:hidden"><PenTool size={32} className="mr-2" /> Sign Here</div>}
+               {!signatureLocked && <div className="absolute inset-0 pointer-events-none flex items-center justify-center text-gray-300 font-mono text-sm print:hidden"><PenTool size={20} className="mr-2" /> Sign Here</div>}
             </div>
             <div className="mt-4 flex justify-center gap-4 print:hidden">
-              <button onClick={clearSignature} className="text-xs font-bold text-gray-500 hover:text-gray-800 px-4 py-2">Clear</button>
-              <button onClick={() => setSignatureLocked(true)} className="bg-black text-white text-xs font-bold px-6 py-2 rounded-lg">Lock Signature</button>
+              <button onClick={clearSignature} className="text-xs font-bold text-gray-500 hover:text-gray-800 px-4 py-2 uppercase tracking-widest">Clear</button>
+              <button onClick={() => setSignatureLocked(true)} className="bg-black text-white text-xs font-bold px-6 py-2 rounded-lg uppercase tracking-widest">Lock Signature</button>
             </div>
           </div>
         </div>
@@ -790,75 +774,74 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c]">
+      <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c] z-50">
         <RefreshCw className="animate-spin mb-4" size={32} />
-        <div className="font-bold tracking-widest text-sm mb-6">CONNECTING TO POSHAKH CLOUD</div>
-        <button onClick={() => { setUseLocalMode(true); setLoading(false); }} className="text-gray-500 text-xs underline hover:text-white">Force Offline Mode</button>
+        <div className="font-bold tracking-widest text-sm uppercase">Loading Cloud Data</div>
+        {showLocalOverride && (
+          <button onClick={forceLocalMode} className="mt-8 text-gray-500 hover:text-white text-xs underline font-mono">
+            Force Offline Mode
+          </button>
+        )}
       </div>
     );
   }
 
   return (
-    <>
-      <style dangerouslySetInnerHTML={{__html: `
-        :root, html, body, #root { width: 100vw !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; overflow-x: hidden !important; }
-      `}} />
-      <div className="min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden">
-        
-        {toast && (
-          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in">
-            <div className={`px-6 py-3 rounded-full shadow-2xl font-bold text-sm tracking-wide ${toast.type === 'error' ? 'bg-rose-500 text-white' : 'bg-[#cdfc4c] text-black'}`}>
-              {toast.msg}
-            </div>
+    <div className="min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden pb-28 md:pb-28">
+      
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in">
+          <div className={`px-6 py-3 rounded-full shadow-2xl font-bold text-sm tracking-wide ${toast.type === 'error' ? 'bg-rose-500 text-white' : 'bg-[#cdfc4c] text-black'}`}>
+            {toast.msg}
           </div>
-        )}
+        </div>
+      )}
 
-        {/* FULL WIDTH HEADER */}
-        <header className="bg-[#022c22] border-b border-[#064e3b] px-6 py-4 flex items-center justify-between sticky top-0 z-40 w-full print:hidden">
-          <div className="flex items-center gap-4">
-            <div className="w-8 h-8 bg-white text-black flex items-center justify-center rounded-lg shrink-0"><Scissors size={18} /></div>
-            <h1 className="text-xl font-black tracking-tight text-white hidden sm:block">Poshakh</h1>
-            <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full shrink-0">
-              <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
-              {useLocalMode ? 'LOCAL MODE' : 'CLOUD ACTIVE'}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="text-right hidden sm:block"><div className="text-sm font-bold text-white">Admin</div><div className="text-[10px] text-green-500 font-bold tracking-widest uppercase">Workspace</div></div>
-            <div className="w-10 h-10 rounded-full bg-green-900 flex items-center justify-center text-green-400 border border-green-700 shrink-0"><User size={18} /></div>
-          </div>
-        </header>
+      {/* FULL WIDTH HEADER */}
+      <header className="bg-[#022c22] border-b border-[#064e3b] px-6 py-4 flex items-center justify-between sticky top-0 z-40 w-full print:hidden shadow-lg">
+        <div className="flex items-center gap-4">
+          <div className="w-8 h-8 bg-white text-black flex items-center justify-center rounded-lg"><Scissors size={18} /></div>
+          <h1 className="text-xl font-black tracking-tight text-white hidden sm:block">Poshakh</h1>
+          <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full">
+            <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
+            {useLocalMode ? 'LOCAL MODE' : 'CLOUD ACTIVE'}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-right hidden sm:block"><div className="text-sm font-bold text-white">Admin</div><div className="text-[10px] text-green-500 font-bold tracking-widest uppercase">Workspace</div></div>
+          <div className="w-10 h-10 rounded-full bg-green-900 flex items-center justify-center text-green-400 border border-green-700"><User size={18} /></div>
+        </div>
+      </header>
 
-        {/* MAIN CONTENT AREA - FULL WIDTH & PADDED FOR SCROLLING */}
-        <main className="flex-1 w-full bg-[#0a0a0a] p-4 md:p-8 pb-32 print:p-0 print:bg-white">
-          {activeTab === 'ledger' && renderLedger()}
-          {activeTab === 'add-batch' && renderAddBatch()}
-          {activeTab === 'pay' && renderAddPay()}
-          {activeTab === 'sign-off' && renderSignOff()}
-          {activeTab === 'setup' && renderSetup()}
-        </main>
+      {/* MAIN CONTENT AREA - FULL WIDTH & PADDED FOR SCROLLING */}
+      <main className="flex-1 w-full bg-[#0a0a0a] p-4 md:p-8 print:p-0 print:bg-white transition-all">
+        {activeTab === 'ledger' && renderLedger()}
+        {activeTab === 'add-batch' && renderAddBatch()}
+        {activeTab === 'pay' && renderAddPay()}
+        {activeTab === 'sign-off' && renderSignOff()}
+        {activeTab === 'setup' && renderSetup()}
+      </main>
 
-        {/* BOTTOM NAVIGATION - FIXED & WIDE */}
-        <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden">
-          <div className="flex justify-around items-center h-20 w-full max-w-5xl mx-auto px-4">
-            <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
-              <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
-            </button>
-            <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-              <Shirt size={20} className={activeTab === 'add-batch' ? "opacity-100" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Add Batch</span>
-            </button>
-            <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-              <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
-            </button>
-            <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-              <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
-            </button>
-            <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-              <Settings size={20} className={activeTab === 'setup' ? "opacity-100" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
-            </button>
-          </div>
-        </nav>
-      </div>
-    </>
+      {/* BOTTOM NAVIGATION - FIXED & WIDE */}
+      <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+        <div className="flex justify-around items-center h-20 w-full max-w-5xl mx-auto px-4">
+          <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
+            <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
+          </button>
+          <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+            <Shirt size={20} className={activeTab === 'add-batch' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Add Batch</span>
+          </button>
+          <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+            <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
+          </button>
+          <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+            <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
+          </button>
+          <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+            <Settings size={20} className={activeTab === 'setup' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
+          </button>
+        </div>
+      </nav>
+    </div>
   );
 }
