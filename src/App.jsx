@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, Scissors, Calendar, User, Shirt, DollarSign, Trash2, 
   Wallet, FileText, TrendingDown, TrendingUp, Package, CreditCard,
   Settings, ChevronRight, BarChart3, List, CheckCircle2, AlertCircle,
-  Home, RefreshCw, LogOut, Clock
+  Home, RefreshCw, LogOut, Clock, PenTool, Printer, AlertOctagon, Eraser
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
@@ -20,9 +20,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [deleteModalId, setDeleteModalId] = useState(null);
+  const [dbError, setDbError] = useState(false);
 
   // --- APP STATE ---
   const [entries, setEntries] = useState([]);
+  const [signatures, setSignatures] = useState([]);
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
   const [tailors, setTailors] = useState(DEFAULT_TAILORS);
   const [selectedTailorFilter, setSelectedTailorFilter] = useState('All');
@@ -51,6 +53,13 @@ export default function App() {
     tailorsText: ''
   });
 
+  // --- SIGNATURE STATE ---
+  const [signDate, setSignDate] = useState(new Date().toISOString().split('T')[0]);
+  const [signTailor, setSignTailor] = useState(DEFAULT_TAILORS[0]);
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [hasDrawn, setHasDrawn] = useState(false);
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
@@ -59,10 +68,14 @@ export default function App() {
   useEffect(() => {
     try {
       // 🔴 DEPLOYMENT STEP: Paste your Firebase Config here.
+      // IF YOU DEPLOY TO VERCEL, YOU MUST FILL THIS IN FOR SAVING TO WORK!
       const YOUR_FIREBASE_CONFIG = {
-        // apiKey: "YOUR_API_KEY",
-        // authDomain: "YOUR_AUTH_DOMAIN",
-        // projectId: "YOUR_PROJECT_ID",
+        apiKey: "AIzaSyBciTbw1cvMD6au0PZw7k-rfdRlUNHea18",
+        authDomain: "tailordaily.firebaseapp.com",
+        projectId: "tailordaily",
+        storageBucket: "tailordaily.firebasestorage.app",
+        messagingSenderId: "669424663727",
+        appId: "1:669424663727:web:046d0cd13ad8a6013c685a"
       };
 
       const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
@@ -70,6 +83,7 @@ export default function App() {
       const firebaseConfig = Object.keys(YOUR_FIREBASE_CONFIG).length > 0 ? YOUR_FIREBASE_CONFIG : fallbackConfig;
       
       if (Object.keys(firebaseConfig).length === 0) {
+        setDbError(true);
         setLoading(false);
         return; 
       }
@@ -107,6 +121,7 @@ export default function App() {
 
     const entriesRef = collection(db, 'artifacts', appId, 'public', 'data', 'tailor_entries');
     const settingsRef = collection(db, 'artifacts', appId, 'public', 'data', 'tailor_settings');
+    const signaturesRef = collection(db, 'artifacts', appId, 'public', 'data', 'tailor_signatures');
 
     const unsubEntries = onSnapshot(entriesRef, (snapshot) => {
       const fetchedEntries = [];
@@ -142,8 +157,85 @@ export default function App() {
       }
     });
 
-    return () => { unsubEntries(); unsubSettings(); };
+    const unsubSignatures = onSnapshot(signaturesRef, (snapshot) => {
+      const fetchedSigs = [];
+      snapshot.forEach(doc => fetchedSigs.push({ id: doc.id, ...doc.data() }));
+      setSignatures(fetchedSigs);
+    });
+
+    return () => { unsubEntries(); unsubSettings(); unsubSignatures(); };
   }, [user, db, appId]);
+
+  // --- SIGNATURE HANDLERS ---
+  useEffect(() => {
+    if (currentView === 'signoff' && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      ctx.strokeStyle = '#cdfc4c'; 
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      if (!signTailor && tailors.length > 0) setSignTailor(tailors[0]);
+    }
+  }, [currentView, tailors]);
+
+  const getCanvasCoordinates = (canvas, e) => {
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches && e.touches.length > 0) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const startDrawing = (e) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const { x, y } = getCanvasCoordinates(canvas, e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setIsDrawing(true);
+    setHasDrawn(true);
+  };
+
+  const draw = (e) => {
+    if (!isDrawing) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const { x, y } = getCanvasCoordinates(canvas, e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => setIsDrawing(false);
+
+  const clearSignature = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasDrawn(false);
+  };
+
+  const handleSaveSignature = async () => {
+    if (!user || !db) return showToast("Cloud not connected.", "error");
+    if (!hasDrawn) return showToast("Please draw a signature first.", "error");
+
+    const canvas = canvasRef.current;
+    const dataUrl = canvas.toDataURL('image/png');
+
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tailor_signatures'), {
+        date: signDate,
+        tailor: signTailor,
+        signature: dataUrl,
+        timestamp: new Date().toISOString()
+      });
+      showToast("Signature saved to cloud!");
+    } catch (err) {
+      showToast("Failed to save signature", "error");
+    }
+  };
 
   const handleProdSubmit = async (e) => {
     e.preventDefault();
@@ -394,195 +486,120 @@ export default function App() {
     </div>
   );
 
-  const renderLogForm = () => (
-    <div className="w-full max-w-4xl mx-auto animate-in fade-in">
-      <div className="bg-[#cdfc4c] p-6 rounded-t-3xl border border-[#cdfc4c]">
-        <h2 className="text-2xl font-bold text-black tracking-tight flex items-center gap-2"><Plus size={24}/> Log Stitched Batch</h2>
-        <p className="text-black/70 text-sm mt-1 font-medium">Add new inventory from the tailor floor.</p>
-      </div>
-      <div className="bg-[#0f0f0f] border border-[#222] border-t-0 rounded-b-3xl p-6 md:p-10 shadow-2xl">
-        <form onSubmit={handleProdSubmit} className="space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Tailor</label>
-              <select value={prodForm.tailor} onChange={(e) => setProdForm({...prodForm, tailor: e.target.value})} className="w-full bg-[#1a1a1a] border border-[#333] text-white px-4 py-3.5 rounded-xl focus:border-[#cdfc4c] outline-none transition-colors appearance-none" required>
-                <option value="" disabled>Select Tailor</option>
-                {tailors.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Date</label>
-              <input type="date" value={prodForm.date} onChange={(e) => setProdForm({...prodForm, date: e.target.value})} className="w-full bg-[#1a1a1a] border border-[#333] text-white px-4 py-3.5 rounded-xl focus:border-[#cdfc4c] outline-none transition-colors" required/>
-            </div>
-          </div>
+  const renderSignOff = () => {
+    const todaysEntries = entries.filter(e => e.date === signDate && e.tailor === signTailor);
+    const todaysTotal = todaysEntries.reduce((acc, curr) => {
+      if (curr.type === 'production') acc.earned += curr.amount;
+      if (curr.type === 'payment') acc.paid += curr.amount;
+      return acc;
+    }, { earned: 0, paid: 0 });
 
+    const existingSig = signatures.find(s => s.date === signDate && s.tailor === signTailor);
+
+    return (
+      <div className="w-full animate-in fade-in">
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 no-print">
           <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Style / Product</label>
-            <select value={prodForm.product} onChange={(e) => setProdForm({...prodForm, product: e.target.value})} className="w-full bg-[#1a1a1a] border border-[#333] text-white px-4 py-3.5 rounded-xl focus:border-[#cdfc4c] outline-none transition-colors appearance-none" required>
-              <option value="" disabled>Select Product</option>
-              {products.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2"><PenTool className="text-[#cdfc4c]"/> Daily Sign-Off</h2>
+            <p className="text-gray-500 text-sm mt-1">Print logs and collect digital signatures.</p>
           </div>
-
-          <div className="bg-[#141414] border border-[#222] p-6 rounded-2xl">
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-4 text-center">Quantities by Size</label>
-            <div className="flex justify-between gap-2 md:gap-4">
-              {['XS', 'S', 'M', 'L', 'XL'].map(size => (
-                <div key={size} className="flex-1">
-                  <label className="block text-[10px] font-bold text-gray-600 mb-2 text-center">{size}</label>
-                  <input type="number" min="0" value={prodForm.sizes[size] || ''} onChange={(e) => setProdForm(prev => ({ ...prev, sizes: { ...prev.sizes, [size]: parseInt(e.target.value) || 0 } }))} placeholder="0" className="w-full text-center bg-[#222] border border-[#333] text-white py-3 rounded-xl focus:border-[#cdfc4c] outline-none transition-colors font-bold"/>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6 pt-4 border-t border-[#222]">
-            <div className="w-full md:w-1/3">
-              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Rate per Piece</label>
-              <div className="relative">
-                <span className="absolute left-4 top-3.5 text-gray-500">₹</span>
-                <input type="number" value={prodForm.pieceRate} onChange={(e) => setProdForm({...prodForm, pieceRate: parseFloat(e.target.value) || 0})} className="w-full pl-8 pr-4 py-3.5 bg-[#1a1a1a] border border-[#333] text-white font-bold rounded-xl focus:border-[#cdfc4c] outline-none transition-colors" required/>
-              </div>
-            </div>
-            <div className="text-center md:text-right w-full md:w-auto">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Batch Value</p>
-              <p className="text-4xl font-bold text-[#cdfc4c] tracking-tighter">
-                ₹{Object.values(prodForm.sizes).reduce((a, b) => a + b, 0) * prodForm.pieceRate}
-              </p>
-            </div>
-          </div>
-
-          <button type="submit" className="w-full py-4 mt-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-bold rounded-xl transition-all flex justify-center items-center gap-2">
-            <Plus size={20} /> Save Batch to Database
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-
-  const renderPayForm = () => (
-    <div className="w-full max-w-3xl mx-auto animate-in fade-in">
-       <div className="bg-[#ffe4e6] p-6 rounded-t-3xl border border-[#fda4af]">
-        <h2 className="text-2xl font-bold text-rose-950 tracking-tight flex items-center gap-2"><Wallet size={24}/> Record Payout</h2>
-        <p className="text-rose-900/70 text-sm mt-1 font-medium">Log cash advances or weekly settlements.</p>
-      </div>
-      <div className="bg-[#0f0f0f] border border-[#222] border-t-0 rounded-b-3xl p-6 md:p-10 shadow-2xl">
-        <form onSubmit={handlePaySubmit} className="space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Tailor</label>
-              <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full bg-[#1a1a1a] border border-[#333] text-white px-4 py-3.5 rounded-xl focus:border-rose-400 outline-none transition-colors appearance-none" required>
-                <option value="" disabled>Select Tailor</option>
-                {tailors.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Date</label>
-              <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full bg-[#1a1a1a] border border-[#333] text-white px-4 py-3.5 rounded-xl focus:border-rose-400 outline-none transition-colors" required/>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Amount Paid</label>
-            <div className="relative">
-              <span className="absolute left-6 top-4 text-rose-500 text-2xl font-bold">₹</span>
-              <input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-14 pr-4 py-4 bg-[#1a1a1a] border border-[#333] text-white text-3xl font-bold rounded-xl focus:border-rose-400 outline-none transition-colors" required/>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Notes (Optional)</label>
-            <input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement" className="w-full bg-[#1a1a1a] border border-[#333] text-white px-4 py-4 rounded-xl focus:border-rose-400 outline-none transition-colors" />
-          </div>
-
-          <button type="submit" className="w-full py-4 mt-4 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl transition-all flex justify-center items-center gap-2">
-            <CreditCard size={20} /> Confirm Payment
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-
-  const renderReports = () => (
-    <div className="w-full animate-in fade-in">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight text-white">Thursday Settlements</h2>
-          <p className="text-gray-500 text-sm mt-1">Automated Friday-Thursday payout cycles.</p>
-        </div>
-        <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#1a1a1a] border border-[#333] text-white font-medium py-2 px-4 rounded-lg text-sm focus:border-[#cdfc4c] outline-none">
-          <option value="All">All Tailors combined</option>
-          {tailors.map(t => <option key={t} value={t}>{t}'s Reports</option>)}
-        </select>
-      </div>
-
-      {weeklyReports.length === 0 ? (
-         <div className="text-center py-24 bg-[#0f0f0f] border border-[#222] rounded-3xl">
-           <p className="text-gray-500 font-medium">No production logged yet.</p>
-         </div>
-      ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full">
-          {weeklyReports.map((week, idx) => {
-            const netPay = week.earned - week.paid;
-            return (
-              <div key={idx} className="bg-[#0f0f0f] border border-[#222] rounded-3xl overflow-hidden shadow-lg">
-                <div className="bg-[#141414] px-6 py-4 border-b border-[#222] flex justify-between items-center">
-                  <span className="text-sm font-bold text-white flex items-center gap-2"><Calendar size={14} className="text-[#cdfc4c]"/> {week.label}</span>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 bg-[#222] px-2 py-1 rounded-md">{week.pieces} Units</span>
-                </div>
-                <div className="p-6 grid grid-cols-2 gap-6">
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Generated</p>
-                    <p className="text-2xl font-bold text-white">₹{week.earned.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Advances Paid</p>
-                    <p className="text-2xl font-bold text-rose-400">- ₹{week.paid.toLocaleString()}</p>
-                  </div>
-                </div>
-                <div className={`px-6 py-5 border-t border-[#222] flex items-center justify-between ${netPay > 0 ? 'bg-rose-950/30' : 'bg-[#141414]'}`}>
-                  <span className={`text-[10px] font-bold uppercase tracking-widest ${netPay > 0 ? 'text-rose-400' : 'text-gray-500'}`}>
-                    {netPay > 0 ? 'Pending Payout' : netPay < 0 ? 'Advance Carryover' : 'Fully Settled'}
-                  </span>
-                  <span className={`text-3xl font-bold tracking-tighter ${netPay > 0 ? 'text-rose-500' : 'text-white'}`}>
-                    ₹{Math.abs(netPay).toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-
-  const renderSettings = () => (
-    <div className="w-full max-w-4xl mx-auto animate-in fade-in">
-      <div className="mb-8">
-        <h2 className="text-xl font-bold tracking-tight text-white">App Configuration</h2>
-        <p className="text-gray-500 text-sm mt-1">Manage tailor team and product SKUs.</p>
-      </div>
-      <div className="bg-[#0f0f0f] border border-[#222] rounded-3xl p-6 md:p-8 space-y-8 shadow-2xl">
-        <div className="bg-amber-950/30 border border-amber-900 rounded-2xl p-5 flex gap-4 text-sm text-amber-200/80 items-start">
-          <AlertCircle size={20} className="shrink-0 text-amber-500 mt-0.5" />
-          <p className="leading-relaxed">Paste lists directly from Excel or CSV (one item per line). Cloud sync instantly updates all devices.</p>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Tailor Team</label>
-            <textarea value={settingsForm.tailorsText} onChange={(e) => setSettingsForm({...settingsForm, tailorsText: e.target.value})} className="w-full p-5 bg-[#1a1a1a] border border-[#333] rounded-2xl text-sm text-white focus:border-[#cdfc4c] outline-none h-64 font-mono leading-relaxed transition-all resize-none" placeholder="Sajid&#10;Imran"/>
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Product Catalog</label>
-            <textarea value={settingsForm.productsText} onChange={(e) => setSettingsForm({...settingsForm, productsText: e.target.value})} className="w-full p-5 bg-[#1a1a1a] border border-[#333] rounded-2xl text-sm text-white focus:border-[#cdfc4c] outline-none h-64 font-mono leading-relaxed transition-all resize-none" placeholder="Wrap Around Dress&#10;Kalamkari Top"/>
+          <div className="flex gap-3">
+             <input type="date" value={signDate} onChange={(e) => setSignDate(e.target.value)} className="bg-[#1a1a1a] border border-[#333] text-white py-2 px-4 rounded-lg text-sm focus:border-[#cdfc4c] outline-none" />
+             <select value={signTailor} onChange={(e) => setSignTailor(e.target.value)} className="bg-[#1a1a1a] border border-[#333] text-white py-2 px-4 rounded-lg text-sm focus:border-[#cdfc4c] outline-none">
+               {tailors.map(t => <option key={t} value={t}>{t}</option>)}
+             </select>
           </div>
         </div>
-        <button onClick={saveSettings} className="w-full py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-bold rounded-xl transition-all text-sm flex justify-center items-center gap-2">
-          <CheckCircle2 size={18}/> Save Configuration to Cloud
-        </button>
+
+        <div id="printable-receipt" className="bg-[#0f0f0f] border border-[#222] rounded-3xl overflow-hidden shadow-2xl p-6 md:p-10 max-w-2xl mx-auto text-white">
+          <div className="text-center mb-8 border-b border-[#333] pb-6">
+            <h1 className="text-3xl font-bold text-[#cdfc4c] tracking-tighter mb-2 receipt-title">POSHAKH</h1>
+            <p className="text-gray-400 font-medium text-sm tracking-widest uppercase receipt-sub">Daily Production Receipt</p>
+            <div className="mt-6 flex justify-between text-left text-sm">
+              <div><span className="text-gray-500">Date:</span> <br/><span className="font-bold text-lg">{signDate}</span></div>
+              <div className="text-right"><span className="text-gray-500">Tailor:</span> <br/><span className="font-bold text-lg">{signTailor}</span></div>
+            </div>
+          </div>
+
+          <table className="w-full text-sm text-left mb-8">
+            <thead className="text-gray-500 border-b border-[#333]">
+              <tr>
+                <th className="py-2 font-medium">Item</th>
+                <th className="py-2 font-medium text-center">Qty</th>
+                <th className="py-2 font-medium text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#222]">
+              {todaysEntries.length === 0 ? (
+                <tr><td colSpan="3" className="py-12 text-center text-gray-500 italic">No records found for {signTailor} on this date.</td></tr>
+              ) : (
+                todaysEntries.map(entry => (
+                  <tr key={entry.id}>
+                    <td className="py-4 font-medium text-gray-300">
+                      {entry.type === 'production' ? entry.product : 'Cash Advance'}
+                    </td>
+                    <td className="py-4 text-center text-gray-400">{entry.type === 'production' ? entry.totalPieces : '-'}</td>
+                    <td className={`py-4 text-right font-bold ${entry.type === 'payment' ? 'text-rose-500' : 'text-white'}`}>
+                      {entry.type === 'payment' ? '-' : ''}₹{entry.amount}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+
+          <div className="bg-[#141414] rounded-2xl p-6 mb-8 border border-[#222] flex justify-between print-summary">
+             <div>
+               <p className="text-gray-500 text-[10px] uppercase tracking-widest font-bold mb-1">Earned Today</p>
+               <p className="text-2xl font-bold text-white">₹{todaysTotal.earned}</p>
+             </div>
+             <div className="text-right">
+               <p className="text-gray-500 text-[10px] uppercase tracking-widest font-bold mb-1">Paid Today</p>
+               <p className="text-2xl font-bold text-rose-500">₹{todaysTotal.paid}</p>
+             </div>
+          </div>
+
+          <div className="mb-4">
+             <p className="text-gray-500 text-[10px] uppercase tracking-widest font-bold mb-3 text-center">Tailor Signature Acknowledgment</p>
+
+             {existingSig ? (
+               <div className="bg-white rounded-2xl p-4 flex justify-center border border-[#333] print-sig-box">
+                 <img src={existingSig.signature} alt="Tailor Signature" className="max-h-32 object-contain" style={{ filter: 'grayscale(1) brightness(0)' }} />
+               </div>
+             ) : (
+               <div className="no-print">
+                 <div className="bg-[#1a1a1a] rounded-2xl border-2 border-dashed border-[#444] overflow-hidden relative touch-none">
+                   <canvas
+                     ref={canvasRef}
+                     width={600}
+                     height={200}
+                     className="w-full h-40 bg-[#111] cursor-crosshair touch-none"
+                     onMouseDown={startDrawing}
+                     onMouseMove={draw}
+                     onMouseUp={stopDrawing}
+                     onMouseLeave={stopDrawing}
+                     onTouchStart={startDrawing}
+                     onTouchMove={draw}
+                     onTouchEnd={stopDrawing}
+                   />
+                   <div className="absolute bottom-3 right-3 flex gap-2">
+                     <button onClick={clearSignature} className="bg-[#222] hover:bg-[#333] text-gray-400 p-2 rounded-lg transition-colors"><Eraser size={16}/></button>
+                     <button onClick={handleSaveSignature} className="bg-[#cdfc4c] text-black font-bold px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm"><CheckCircle2 size={16}/> Lock Signature</button>
+                   </div>
+                 </div>
+               </div>
+             )}
+          </div>
+        </div>
+
+        <div className="max-w-2xl mx-auto mt-6 flex justify-center no-print">
+           <button onClick={() => window.print()} className="bg-white hover:bg-gray-200 text-black font-bold px-8 py-4 rounded-xl transition-all flex items-center gap-2 shadow-lg">
+             <Printer size={20}/> Print Receipt
+           </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (loading) {
     return (
@@ -596,6 +613,40 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-black text-white font-sans selection:bg-[#cdfc4c]/30 overflow-hidden">
       
+      <style>{`
+        @media print {
+          body { background: white; margin: 0; padding: 0; }
+          body * { visibility: hidden; }
+          #printable-receipt, #printable-receipt * { 
+            visibility: visible; 
+            color: black !important; 
+            background-color: white !important; 
+            border-color: #ddd !important; 
+          }
+          #printable-receipt { 
+            position: absolute; left: 0; top: 0; width: 100%; max-width: 100%; 
+            box-shadow: none; border: none; padding: 20px;
+          }
+          .receipt-title { color: black !important; }
+          .receipt-sub { color: #666 !important; }
+          .print-summary { background-color: #f5f5f5 !important; }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+
+      {/* Database Warning for Vercel Deployment */}
+      {dbError && (
+        <div className="bg-rose-600 text-white p-4 flex flex-col md:flex-row items-center justify-between z-50 no-print">
+          <div className="flex items-center gap-3">
+            <AlertOctagon size={24} className="shrink-0"/>
+            <div>
+              <p className="font-bold">Missing Firebase Configuration</p>
+              <p className="text-sm text-rose-200">The app is running, but it cannot save data. You must paste your Firebase keys into the YOUR_FIREBASE_CONFIG variable in App.jsx.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toast && (
         <div className={`fixed top-4 right-4 z-[100] px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 text-sm font-bold animate-in fade-in slide-in-from-top-4 border ${toast.type === 'error' ? 'bg-rose-950 border-rose-900 text-rose-200' : 'bg-[#cdfc4c] border-[#b5e638] text-black'}`}>
@@ -647,16 +698,18 @@ export default function App() {
         {currentView === 'ledger' && renderLedger()}
         {currentView === 'log' && renderLogForm()}
         {currentView === 'pay' && renderPayForm()}
+        {currentView === 'signoff' && renderSignOff()}
         {currentView === 'reports' && renderReports()}
         {currentView === 'settings' && renderSettings()}
       </main>
 
       {/* --- BOTTOM NAVIGATION (Like Reference) --- */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a] border-t border-[#222] flex justify-between px-2 sm:px-8 pb-safe pt-2 z-50 overflow-x-auto no-scrollbar">
+      <nav className="fixed bottom-0 left-0 right-0 bg-[#0a0a0a] border-t border-[#222] flex justify-between px-2 sm:px-8 pb-safe pt-2 z-50 overflow-x-auto no-scrollbar no-print">
         {[
           { id: 'ledger', icon: Home, label: 'Dashboard' },
           { id: 'log', icon: Plus, label: 'Log Batch' },
           { id: 'pay', icon: Wallet, label: 'Add Pay' },
+          { id: 'signoff', icon: PenTool, label: 'Sign-Off' },
           { id: 'reports', icon: BarChart3, label: 'Settlements' },
           { id: 'settings', icon: Settings, label: 'Setup' }
         ].map(tab => (
