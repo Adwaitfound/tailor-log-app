@@ -112,8 +112,9 @@ export default function App() {
   useEffect(() => {
     if (!user || !db) return;
 
-    const entriesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'tailor_entries');
-    const settingsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'tailor_settings');
+    // CHANGED: Saving to a public app-level collection so data persists across refreshes and devices
+    const entriesRef = collection(db, 'artifacts', appId, 'public', 'data', 'tailor_entries');
+    const settingsRef = collection(db, 'artifacts', appId, 'public', 'data', 'tailor_settings');
 
     const unsubEntries = onSnapshot(entriesRef, (snapshot) => {
       const fetchedEntries = [];
@@ -172,7 +173,8 @@ export default function App() {
     };
 
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'tailor_entries'), newEntry);
+      // CHANGED: Saving to the public data path
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tailor_entries'), newEntry);
       showToast("Production logged successfully!");
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
       setMobileTab('ledger');
@@ -199,7 +201,8 @@ export default function App() {
     };
 
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'tailor_entries'), newEntry);
+      // CHANGED: Saving to the public data path
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tailor_entries'), newEntry);
       showToast("Payment recorded successfully!");
       setPayForm(prev => ({ ...prev, amount: '', note: '' }));
       setMobileTab('ledger');
@@ -212,7 +215,8 @@ export default function App() {
   const confirmDelete = async () => {
     if (!user || !db || !deleteModalId) return;
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tailor_entries', deleteModalId));
+      // CHANGED: Deleting from the public data path
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tailor_entries', deleteModalId));
       showToast("Record permanently deleted.");
       setDeleteModalId(null);
     } catch (err) {
@@ -221,13 +225,14 @@ export default function App() {
   };
 
   const saveSettings = async () => {
-    if (!user || !db) return;
+    if (!user || !db) return showToast("Database not fully connected yet.", "error");
     const newTailors = settingsForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
     const newProducts = settingsForm.productsText.split('\n').map(p => p.trim()).filter(p => p);
     if (newTailors.length === 0 || newProducts.length === 0) return showToast("Lists cannot be empty", "error");
 
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tailor_settings', 'config'), {
+      // CHANGED: Saving settings to the public data path so it shares across devices/refreshes
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tailor_settings', 'config'), {
         tailors: newTailors, products: newProducts, updatedAt: new Date().toISOString()
       });
       showToast("Settings synced to Cloud!");
@@ -396,13 +401,13 @@ export default function App() {
   const renderLedger = () => (
     <div className="animate-in fade-in slide-in-from-bottom-4">
       {/* Desktop Summary Header (Only visible on lg inside right pane) */}
-      <div className="hidden lg:flex mb-6 items-end justify-between gap-6">
+      <div className="hidden lg:flex mb-6 items-end justify-between gap-6 flex-wrap">
         <h2 className="text-3xl font-serif text-stone-900 tracking-tight">Account Ledger</h2>
-        <div className="flex gap-8 bg-white px-8 py-4 rounded-3xl shadow-sm border border-stone-100 shrink-0">
+        <div className="flex flex-wrap gap-6 xl:gap-8 bg-white px-6 py-4 rounded-3xl shadow-sm border border-stone-100 shrink-0">
           <div><p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Stitched</p><p className="text-2xl font-serif text-stone-900">{totals.pieces}</p></div>
-          <div className="w-px bg-stone-100"></div>
+          <div className="w-px bg-stone-100 hidden sm:block"></div>
           <div><p className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Value</p><p className="text-2xl font-serif text-stone-900">₹{totals.earned.toLocaleString()}</p></div>
-          <div className="w-px bg-stone-100"></div>
+          <div className="w-px bg-stone-100 hidden sm:block"></div>
           <div><p className="text-[10px] font-bold text-emerald-600/70 uppercase tracking-widest mb-1">Paid</p><p className="text-2xl font-serif text-emerald-700">₹{totals.paid.toLocaleString()}</p></div>
         </div>
       </div>
@@ -594,7 +599,7 @@ export default function App() {
           <div>
             <h1 className="text-xl font-serif font-semibold tracking-tight text-stone-900 leading-tight">Poshakh</h1>
             <div className="flex items-center gap-1.5 text-[10px] text-emerald-700 font-bold tracking-wider uppercase">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div> Cloud Synced
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div> App Ledger Synced
             </div>
           </div>
         </div>
@@ -609,10 +614,10 @@ export default function App() {
       </header>
 
       {/* --- DESKTOP LAYOUT (Side-by-Side) --- */}
-      <main className="hidden lg:flex max-w-[90rem] mx-auto w-full p-8 gap-8 items-start flex-1">
+      <main className="hidden lg:grid grid-cols-12 max-w-7xl mx-auto w-full px-6 py-8 gap-8 xl:gap-12 items-start flex-1">
         
         {/* Left Sidebar: Forms */}
-        <div className="w-[400px] shrink-0 sticky top-28 space-y-4">
+        <div className="col-span-4 shrink-0 sticky top-28 space-y-4">
           <div className="bg-stone-200/50 p-1.5 rounded-2xl flex gap-1">
             <button onClick={() => setDesktopFormTab('log')} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${desktopFormTab === 'log' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}>
               <Shirt size={16}/> Log Batch
@@ -625,14 +630,14 @@ export default function App() {
         </div>
 
         {/* Right Main Area: Data Views */}
-        <div className="flex-1 min-w-0 flex flex-col gap-6">
-          <div className="bg-white border border-stone-200 p-1.5 rounded-full flex gap-1 shadow-sm self-start w-full max-w-md">
+        <div className="col-span-8 min-w-0 flex flex-col gap-6">
+          <div className="bg-white border border-stone-200 p-1.5 rounded-full flex gap-1 shadow-sm self-start w-full max-w-lg">
             {[
               { id: 'ledger', icon: List, label: 'Ledger' },
               { id: 'reports', icon: BarChart3, label: 'Settlements' },
               { id: 'settings', icon: Settings, label: 'Setup' }
             ].map(tab => (
-              <button key={tab.id} onClick={() => setDesktopViewTab(tab.id)} className={`flex-1 py-2.5 px-4 text-sm font-bold rounded-full transition-all flex items-center justify-center gap-2 ${desktopViewTab === 'tab.id' || desktopViewTab === tab.id ? 'bg-stone-900 text-white shadow-md' : 'bg-transparent text-stone-500 hover:text-stone-800 hover:bg-stone-50'}`}>
+              <button key={tab.id} onClick={() => setDesktopViewTab(tab.id)} className={`flex-1 py-2.5 px-4 text-sm font-bold rounded-full transition-all flex items-center justify-center gap-2 ${desktopViewTab === tab.id ? 'bg-stone-900 text-white shadow-md' : 'bg-transparent text-stone-500 hover:text-stone-800 hover:bg-stone-50'}`}>
                 <tab.icon size={16}/> {tab.label}
               </button>
             ))}
