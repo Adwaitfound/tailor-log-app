@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   User, Shirt, IndianRupee, Trash2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download,
+  LogOut, Lock
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -11,6 +12,7 @@ import {
   deleteDoc, doc, setDoc, updateDoc
 } from 'firebase/firestore';
 
+// Your Real Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyBciTbw1cvMD6au0PZw7k-rfdRlUNHea18",
   authDomain: "tailordaily.firebaseapp.com",
@@ -33,20 +35,24 @@ const PoshakhLogo = ({ size = 20 }) => (
   </svg>
 );
 
+// ADMIN SECURITY PIN
+const ADMIN_PIN = "1234";
+
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [tailors, setTailors] = useState(["Sajid", "Imran"]);
-  const [products, setProducts] = useState([
-    { name: "Wrap Around Dress", image: null },
-    { name: "Kalamkari Top", image: null }
-  ]);
+  const [tailors, setTailors] = useState([]);
+  const [products, setProducts] = useState([]);
   
+  // Role Based Auth
+  const [role, setRole] = useState(null); // 'admin' | 'staff' | null
+  const [loginStep, setLoginStep] = useState('select'); // 'select' | 'pin'
+  const [pinInput, setPinInput] = useState('');
+
   const [activeTab, setActiveTab] = useState('ledger');
   const [selectedTailorFilter, setSelectedTailorFilter] = useState('All');
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [useLocalMode, setUseLocalMode] = useState(false);
-  const [showLocalOverride, setShowLocalOverride] = useState(false);
   
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -79,19 +85,19 @@ export default function App() {
     tailor: 'All'
   });
 
-  // NEW: Date Range for Sign-Off Receipt
-  const [signOffStartDate, setSignOffStartDate] = useState(new Date(new Date().setDate(new Date().getDate() - 6)).toISOString().split('T')[0]); // Default to 1 week
+  const [signOffStartDate, setSignOffStartDate] = useState(new Date(new Date().setDate(new Date().getDate() - 6)).toISOString().split('T')[0]);
   const [signOffEndDate, setSignOffEndDate] = useState(new Date().toISOString().split('T')[0]);
-  const [printFormat, setPrintFormat] = useState('a4'); // 'a4' or 'thermal'
+  const [printFormat, setPrintFormat] = useState('a4'); 
 
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
   useEffect(() => {
+    // 1. Force absolute edge-to-edge layout by destroying Vite's hidden box
     const style = document.createElement('style');
     style.innerHTML = `
-      #root { max-width: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+      #root { max-width: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
       body, html { width: 100%; margin: 0; padding: 0; overflow-x: hidden; background-color: #0a0a0a; }
       .custom-scrollbar::-webkit-scrollbar { width: 6px; }
       .custom-scrollbar::-webkit-scrollbar-track { background: #111; }
@@ -100,9 +106,15 @@ export default function App() {
     `;
     document.head.appendChild(style);
 
+    // 2. Load Saved Role
+    const savedRole = localStorage.getItem('poshakh_role');
+    if (savedRole) {
+      setRole(savedRole);
+      if (savedRole === 'staff') setActiveTab('add-batch');
+    }
+
     let unsubscribeLedger;
     let unsubscribeConfig;
-    let fallbackTimer;
 
     const loadLocalData = () => {
       console.log("Loading Local Fallback Data");
@@ -117,14 +129,9 @@ export default function App() {
           tailorsText: (localConfig.tailors || []).join('\n'),
           productsText: (localConfig.products || []).map(p => p.image ? `${p.name}\t${p.image}` : p.name).join('\n')
         });
-      } else {
-        setSetupForm({
-          tailorsText: tailors.join('\n'),
-          productsText: products.map(p => p.name).join('\n')
-        });
+        setProdForm(prev => ({ ...prev, tailor: localConfig?.tailors?.[0] || '', product: localConfig?.products?.[0]?.name || '' }));
+        setPayForm(prev => ({ ...prev, tailor: localConfig?.tailors?.[0] || '' }));
       }
-      setProdForm(prev => ({ ...prev, tailor: localConfig?.tailors?.[0] || tailors[0] || '', product: localConfig?.products?.[0]?.name || products[0]?.name || '' }));
-      setPayForm(prev => ({ ...prev, tailor: localConfig?.tailors?.[0] || tailors[0] || '' }));
       setLoading(false);
     };
 
@@ -134,7 +141,6 @@ export default function App() {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setEntries(data);
-          clearTimeout(fallbackTimer);
           setLoading(false);
         }, (err) => {
           console.error("Firebase Read Blocked:", err);
@@ -165,14 +171,9 @@ export default function App() {
 
     fetchFirebaseDirectly();
 
-    fallbackTimer = setTimeout(() => {
-      if (loading) setShowLocalOverride(true);
-    }, 4000);
-
     return () => {
       if (unsubscribeLedger) unsubscribeLedger();
       if (unsubscribeConfig) unsubscribeConfig();
-      clearTimeout(fallbackTimer);
     };
   }, []);
 
@@ -182,6 +183,30 @@ export default function App() {
     setEntries(localLedger);
     setLoading(false);
     showToast("Switched to Local Offline Mode", "error");
+  };
+
+  const handleLogin = (selectedRole) => {
+    if (selectedRole === 'staff') {
+      setRole('staff');
+      setActiveTab('add-batch');
+      localStorage.setItem('poshakh_role', 'staff');
+    } else if (selectedRole === 'admin') {
+      if (pinInput === ADMIN_PIN) {
+        setRole('admin');
+        setActiveTab('ledger');
+        localStorage.setItem('poshakh_role', 'admin');
+        setPinInput('');
+      } else {
+        showToast("Incorrect PIN", "error");
+        setPinInput('');
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    setRole(null);
+    setLoginStep('select');
+    localStorage.removeItem('poshakh_role');
   };
 
   const showToast = (msg, type = "success") => {
@@ -237,7 +262,7 @@ export default function App() {
       }
       setEditingEntryId(null);
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
-      setActiveTab('ledger');
+      if (role === 'admin') setActiveTab('ledger');
     } catch (err) {
       showToast("Failed to save.", "error");
     }
@@ -405,26 +430,17 @@ export default function App() {
     if (!canvasRef.current) return null;
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    
-    // Support both mouse and touch events
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-
-    // Calculate scaling ratio
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-
-    return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY
-    };
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
   };
 
   const startDrawing = (e) => {
     if (signatureLocked || !canvasRef.current) return;
     const coords = getCoordinates(e);
     if (!coords) return;
-    
     const ctx = canvasRef.current.getContext('2d');
     ctx.beginPath();
     ctx.moveTo(coords.x, coords.y);
@@ -433,11 +449,9 @@ export default function App() {
 
   const draw = (e) => {
     if (!isDrawing || signatureLocked || !canvasRef.current) return;
-    e.preventDefault(); // Prevent scrolling on touch screens
-    
+    e.preventDefault(); 
     const coords = getCoordinates(e);
     if (!coords) return;
-
     const ctx = canvasRef.current.getContext('2d');
     ctx.lineTo(coords.x, coords.y);
     ctx.strokeStyle = '#000'; 
@@ -469,6 +483,77 @@ export default function App() {
 
   const pendingBalance = totals.earned - totals.paid;
   const currentSelectedProductImage = products.find(p => p.name === prodForm.product)?.image;
+
+  // --- LOGIN SCREEN ---
+  const renderLogin = () => (
+    <div className="min-h-screen w-full bg-[#0a0a0a] flex items-center justify-center p-6">
+      <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 bg-white flex items-center justify-center rounded-2xl shadow-lg mx-auto mb-6">
+            <PoshakhLogo size={36} />
+          </div>
+          <h1 className="text-3xl font-black tracking-tight text-white mb-2">Poshakh Sync</h1>
+          <p className="text-gray-400 text-sm">Select your workspace to continue.</p>
+        </div>
+
+        {loginStep === 'select' ? (
+          <div className="space-y-4">
+            <button 
+              onClick={() => handleLogin('staff')}
+              className="w-full bg-[#111] border border-gray-800 hover:border-gray-600 p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group"
+            >
+              <div className="w-12 h-12 rounded-full bg-gray-800 group-hover:bg-gray-700 flex items-center justify-center text-white transition-colors">
+                <Shirt size={24} />
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-white">Tailor / Staff</div>
+                <div className="text-xs text-gray-500 mt-1">Log daily production batches</div>
+              </div>
+            </button>
+
+            <button 
+              onClick={() => setLoginStep('pin')}
+              className="w-full bg-[#cdfc4c] hover:bg-[#b5e638] p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group shadow-lg shadow-[#cdfc4c]/10"
+            >
+              <div className="w-12 h-12 rounded-full bg-black/10 group-hover:bg-black/20 flex items-center justify-center text-black transition-colors">
+                <Lock size={24} />
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-black">Admin Dashboard</div>
+                <div className="text-xs text-black/60 mt-1">Full access & financial ledger</div>
+              </div>
+            </button>
+          </div>
+        ) : (
+          <div className="bg-[#111] border border-gray-800 p-8 rounded-3xl animate-in slide-in-from-bottom-4">
+            <h2 className="text-xl font-bold text-white text-center mb-6">Enter Admin PIN</h2>
+            <div className="flex flex-col gap-4">
+              <input 
+                type="password" 
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="****"
+                className="w-full text-center tracking-[1em] font-black text-2xl py-4 bg-black border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"
+                autoFocus
+              />
+              <button 
+                onClick={() => handleLogin('admin')}
+                className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl"
+              >
+                Unlock
+              </button>
+              <button 
+                onClick={() => { setLoginStep('select'); setPinInput(''); }}
+                className="w-full py-3 text-gray-500 hover:text-white text-sm font-bold"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   const renderLedger = () => (
     <div className="w-full space-y-6 animate-in fade-in duration-500">
@@ -905,13 +990,18 @@ export default function App() {
       <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c] z-50">
         <RefreshCw className="animate-spin mb-4" size={32} />
         <div className="font-bold tracking-widest text-sm uppercase">Loading Cloud Data</div>
-        {showLocalOverride && (
+        {useLocalMode && (
           <button onClick={forceLocalMode} className="mt-8 text-gray-500 hover:text-white text-xs underline font-mono">
             Force Offline Mode
           </button>
         )}
       </div>
     );
+  }
+
+  // INTERCEPT: Require Role Login
+  if (!role) {
+    return renderLogin();
   }
 
   return (
@@ -932,44 +1022,64 @@ export default function App() {
             <PoshakhLogo size={18} />
           </div>
           <h1 className="text-xl font-black tracking-tight text-white hidden sm:block">Poshakh</h1>
-          <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full">
-            <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
-            {useLocalMode ? 'LOCAL MODE' : 'CLOUD ACTIVE'}
-          </span>
+          {role === 'admin' && (
+            <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full">
+              <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
+              {useLocalMode ? 'LOCAL MODE' : 'CLOUD ACTIVE'}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right hidden sm:block"><div className="text-sm font-bold text-white">Admin</div><div className="text-[10px] text-green-500 font-bold tracking-widest uppercase">Workspace</div></div>
-          <div className="w-10 h-10 rounded-full bg-green-900 flex items-center justify-center text-green-400 border border-green-700"><User size={18} /></div>
+        <div className="flex items-center gap-4">
+          <div className="text-right hidden sm:block">
+            <div className="text-sm font-bold text-white">{role === 'admin' ? 'Admin' : 'Staff'}</div>
+            <div className="text-[10px] text-green-500 font-bold tracking-widest uppercase">Workspace</div>
+          </div>
+          <div className="w-10 h-10 rounded-full bg-green-900 flex items-center justify-center text-green-400 border border-green-700">
+            <User size={18} />
+          </div>
+          <button onClick={handleLogout} className="text-gray-400 hover:text-white transition-colors ml-2" title="Switch User / Logout">
+            <LogOut size={20} />
+          </button>
         </div>
       </header>
 
-      {/* MAIN CONTENT AREA - FULL WIDTH & PADDED FOR SCROLLING */}
+      {/* MAIN CONTENT AREA */}
       <main className="flex-1 w-full bg-[#0a0a0a] p-4 md:p-8 print:p-0 print:bg-white transition-all">
         {activeTab === 'ledger' && renderLedger()}
         {activeTab === 'add-batch' && renderAddBatch()}
-        {activeTab === 'pay' && renderAddPay()}
+        {activeTab === 'pay' && renderPay()}
         {activeTab === 'sign-off' && renderSignOff()}
         {activeTab === 'setup' && renderSetup()}
       </main>
 
-      {/* BOTTOM NAVIGATION - FIXED & WIDE */}
+      {/* BOTTOM NAVIGATION */}
       <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-        <div className="flex justify-around items-center h-20 w-full max-w-5xl mx-auto px-4">
-          <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
-            <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
-          </button>
+        <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 ${role === 'staff' ? 'justify-center' : 'justify-around'}`}>
+          
+          {role === 'admin' && (
+            <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
+              <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
+            </button>
+          )}
+
           <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
             <Shirt size={20} className={activeTab === 'add-batch' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Add Batch</span>
           </button>
-          <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
-          </button>
-          <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
-          </button>
-          <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            <Settings size={20} className={activeTab === 'setup' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
-          </button>
+
+          {role === 'admin' && (
+            <>
+              <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
+              </button>
+              <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
+              </button>
+              <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                <Settings size={20} className={activeTab === 'setup' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
+              </button>
+            </>
+          )}
+
         </div>
       </nav>
     </div>
