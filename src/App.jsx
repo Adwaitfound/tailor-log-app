@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  Scissors, User, Shirt, IndianRupee, Trash2,
+  User, Shirt, IndianRupee, Trash2,
   Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download
 } from 'lucide-react';
 
@@ -23,6 +23,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+// Custom Poshakh Brand Logo Component
+const PoshakhLogo = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="7" r="5.5" fill="#9b1c1c" />
+    <path d="M4 14.5H20" stroke="#064e3b" strokeWidth="2.5" strokeLinecap="round" />
+    <circle cx="12" cy="20.5" r="2.5" fill="#9b1c1c" />
+  </svg>
+);
 
 export default function App() {
   const [entries, setEntries] = useState([]);
@@ -919,7 +928,9 @@ export default function App() {
       {/* FULL WIDTH HEADER */}
       <header className="bg-[#022c22] border-b border-[#064e3b] px-6 py-4 flex items-center justify-between sticky top-0 z-40 w-full print:hidden shadow-lg">
         <div className="flex items-center gap-4">
-          <div className="w-8 h-8 bg-white text-black flex items-center justify-center rounded-lg"><Scissors size={18} /></div>
+          <div className="w-8 h-8 bg-white flex items-center justify-center rounded-lg shadow-sm">
+            <PoshakhLogo size={18} />
+          </div>
           <h1 className="text-xl font-black tracking-tight text-white hidden sm:block">Poshakh</h1>
           <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full">
             <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
