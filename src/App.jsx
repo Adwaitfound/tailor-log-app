@@ -70,7 +70,9 @@ export default function App() {
     tailor: 'All'
   });
 
-  const [signOffDate, setSignOffDate] = useState(new Date().toISOString().split('T')[0]);
+  // NEW: Date Range for Sign-Off Receipt
+  const [signOffStartDate, setSignOffStartDate] = useState(new Date(new Date().setDate(new Date().getDate() - 6)).toISOString().split('T')[0]); // Default to 1 week
+  const [signOffEndDate, setSignOffEndDate] = useState(new Date().toISOString().split('T')[0]);
 
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -686,12 +688,24 @@ export default function App() {
 
   const renderSignOff = () => {
     const targetTailor = selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter;
-    const todaysLog = entries.filter(e => e.tailor === targetTailor && e.date === signOffDate && e.type === 'production');
-    const todaysPay = entries.filter(e => e.tailor === targetTailor && e.date === signOffDate && e.type === 'payment');
-    const earnedToday = todaysLog.reduce((sum, e) => sum + e.amount, 0);
-    const paidToday = todaysPay.reduce((sum, e) => sum + e.amount, 0);
-    const piecesToday = todaysLog.reduce((sum, e) => sum + e.totalPieces, 0);
+    
+    // Filter entries by Date Range & Tailor
+    const rangeLogs = entries.filter(e => {
+      const d = new Date(e.date);
+      const start = new Date(signOffStartDate);
+      const end = new Date(signOffEndDate);
+      return e.tailor === targetTailor && d >= start && d <= end;
+    });
 
+    const periodProduction = rangeLogs.filter(e => e.type === 'production');
+    const periodPayments = rangeLogs.filter(e => e.type === 'payment');
+    
+    const earnedPeriod = periodProduction.reduce((sum, e) => sum + e.amount, 0);
+    const paidPeriod = periodPayments.reduce((sum, e) => sum + e.amount, 0);
+    const piecesPeriod = periodProduction.reduce((sum, e) => sum + e.totalPieces, 0);
+    const periodBalance = earnedPeriod - paidPeriod;
+
+    // Helper to format sizes clearly
     const formatSizes = (sizes) => {
       if (!sizes) return '';
       const activeSizes = Object.entries(sizes).filter(([_, qty]) => qty > 0);
@@ -702,9 +716,15 @@ export default function App() {
     return (
       <div className="w-full max-w-3xl mx-auto pb-12 print:pb-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="print:hidden mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3 w-full md:w-auto">
-            <select value={selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="w-full md:w-auto bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">{tailors.map(t => <option key={t} value={t}>{t}</option>)}</select>
-            <input type="date" value={signOffDate} onChange={(e) => { setSignOffDate(e.target.value); clearSignature(); }} className="w-full md:w-auto bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+          <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+            <select value={selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="w-full md:w-auto bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">
+              {tailors.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <input type="date" value={signOffStartDate} onChange={(e) => { setSignOffStartDate(e.target.value); clearSignature(); }} className="w-full bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+              <span className="text-gray-500 text-xs font-bold uppercase">to</span>
+              <input type="date" value={signOffEndDate} onChange={(e) => { setSignOffEndDate(e.target.value); clearSignature(); }} className="w-full bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+            </div>
           </div>
           <button onClick={() => window.print()} className="flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white font-bold transition-colors w-full md:w-auto"><Printer size={16} /> Print</button>
         </div>
@@ -719,26 +739,33 @@ export default function App() {
           </div>
           
           <div className="flex justify-between mb-8 font-mono text-sm border-b border-gray-200 pb-4">
-            <div><div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Date</div><div className="font-bold text-lg">{signOffDate}</div></div>
-            <div className="text-right"><div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Tailor</div><div className="font-bold text-lg">{targetTailor}</div></div>
+            <div>
+              <div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Settlement Period</div>
+              <div className="font-bold text-base">{signOffStartDate === signOffEndDate ? signOffStartDate : `${signOffStartDate} to ${signOffEndDate}`}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Tailor</div>
+              <div className="font-bold text-xl uppercase">{targetTailor}</div>
+            </div>
           </div>
           
           <div className="mb-8">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Production Log</h3>
-            {todaysLog.length === 0 ? <p className="text-gray-400 italic font-mono text-sm py-4">No production recorded on this date.</p> : (
+            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4 bg-gray-50 p-2 rounded">Production Log</h3>
+            {periodProduction.length === 0 ? <p className="text-gray-400 italic font-mono text-sm py-4">No production recorded in this period.</p> : (
               <table className="w-full text-sm font-mono">
                 <thead className="border-b border-dashed border-gray-300 text-left text-gray-500 text-[10px]">
                   <tr>
-                    <th className="py-3 font-normal uppercase tracking-widest">Style Details</th>
+                    <th className="py-3 font-normal uppercase tracking-widest">Date / Style Details</th>
                     <th className="py-3 font-normal uppercase tracking-widest text-center">Qty</th>
                     <th className="py-3 font-normal uppercase tracking-widest text-right">Value</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-dashed divide-gray-200">
-                  {todaysLog.map(log => (
+                  {periodProduction.map(log => (
                     <tr key={log.id}>
                       <td className="py-4 pr-4">
-                        <div className="font-bold text-gray-900 font-sans text-base">{log.product}</div>
+                        <div className="text-[9px] text-gray-400 mb-0.5">{log.date}</div>
+                        <div className="font-bold text-gray-900 font-sans text-base leading-tight">{log.product}</div>
                         <div className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest">Sizes: {formatSizes(log.sizes)}</div>
                       </td>
                       <td className="py-4 text-center font-bold text-lg">{log.totalPieces}</td>
@@ -749,11 +776,37 @@ export default function App() {
               </table>
             )}
           </div>
+
+          {periodPayments.length > 0 && (
+            <div className="mb-8">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-600 mb-4 bg-emerald-50 p-2 rounded">Payment Advances Log</h3>
+              <table className="w-full text-sm font-mono">
+                <thead className="border-b border-dashed border-gray-300 text-left text-gray-500 text-[10px]">
+                  <tr>
+                    <th className="py-3 font-normal uppercase tracking-widest">Date / Details</th>
+                    <th className="py-3 font-normal uppercase tracking-widest text-right">Amount Paid</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dashed divide-gray-200">
+                  {periodPayments.map(log => (
+                    <tr key={log.id}>
+                      <td className="py-4 pr-4">
+                        <div className="text-[9px] text-gray-400 mb-0.5">{log.date}</div>
+                        <div className="font-bold text-gray-900 font-sans text-sm">{log.note || 'Cash Payout'}</div>
+                      </td>
+                      <td className="py-4 text-right text-emerald-600 font-bold text-base">- ₹{log.amount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           
-          <div className="grid grid-cols-3 gap-4 mb-8">
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Pieces</div><div className="text-2xl font-black">{piecesToday}</div></div>
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Earned</div><div className="text-2xl font-black text-gray-900">₹{earnedToday}</div></div>
-            <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100"><div className="text-[10px] uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Cash Paid</div><div className="text-2xl font-black text-emerald-700">₹{paidToday}</div></div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 border-t-2 border-black pt-6">
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Pieces</div><div className="text-xl font-black">{piecesPeriod}</div></div>
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Earned</div><div className="text-xl font-black text-gray-900">₹{earnedPeriod}</div></div>
+            <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100"><div className="text-[10px] uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Cash Paid</div><div className="text-xl font-black text-emerald-700">₹{paidPeriod}</div></div>
+            <div className={`${periodBalance > 0 ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'} p-4 rounded-xl border`}><div className={`text-[10px] uppercase tracking-widest font-bold ${periodBalance > 0 ? 'text-orange-600/70' : 'text-gray-400'} mb-1`}>Period Balance</div><div className={`text-xl font-black ${periodBalance > 0 ? 'text-orange-600' : 'text-gray-900'}`}>₹{periodBalance}</div></div>
           </div>
           
           <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center">
