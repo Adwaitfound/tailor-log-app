@@ -392,22 +392,49 @@ export default function App() {
     showToast("Report Downloaded!");
   };
 
+  const getCoordinates = (e) => {
+    if (!canvasRef.current) return null;
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    
+    // Support both mouse and touch events
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    // Calculate scaling ratio
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
+  };
+
   const startDrawing = (e) => {
     if (signatureLocked || !canvasRef.current) return;
+    const coords = getCoordinates(e);
+    if (!coords) return;
+    
     const ctx = canvasRef.current.getContext('2d');
-    const rect = canvasRef.current.getBoundingClientRect();
     ctx.beginPath();
-    ctx.moveTo((e.clientX || e.touches?.[0]?.clientX) - rect.left, (e.clientY || e.touches?.[0]?.clientY) - rect.top);
+    ctx.moveTo(coords.x, coords.y);
     setIsDrawing(true);
   };
 
   const draw = (e) => {
     if (!isDrawing || signatureLocked || !canvasRef.current) return;
-    e.preventDefault();
+    e.preventDefault(); // Prevent scrolling on touch screens
+    
+    const coords = getCoordinates(e);
+    if (!coords) return;
+
     const ctx = canvasRef.current.getContext('2d');
-    const rect = canvasRef.current.getBoundingClientRect();
-    ctx.lineTo((e.clientX || e.touches?.[0]?.clientX) - rect.left, (e.clientY || e.touches?.[0]?.clientY) - rect.top);
-    ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.lineTo(coords.x, coords.y);
+    ctx.strokeStyle = '#000'; 
+    ctx.lineWidth = 3; 
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.stroke();
   };
 
@@ -838,7 +865,20 @@ export default function App() {
           <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center">
             <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Tailor Authorization</h3>
             <div className={`bg-gray-50 rounded-lg overflow-hidden border border-gray-300 relative mx-auto w-full ${printFormat === 'thermal' ? 'h-24' : 'max-w-md h-40'} print:bg-white print:border-black`}>
-               <canvas ref={canvasRef} width={400} height={160} className="w-full h-full cursor-crosshair touch-none" onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseOut={stopDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing} />
+               <canvas 
+                 ref={canvasRef} 
+                 width={800} 
+                 height={320} 
+                 style={{ width: '100%', height: '100%' }}
+                 className="cursor-crosshair touch-none" 
+                 onMouseDown={startDrawing} 
+                 onMouseMove={draw} 
+                 onMouseUp={stopDrawing} 
+                 onMouseOut={stopDrawing} 
+                 onTouchStart={startDrawing} 
+                 onTouchMove={draw} 
+                 onTouchEnd={stopDrawing} 
+               />
                {!signatureLocked && <div className="absolute inset-0 pointer-events-none flex items-center justify-center text-gray-300 font-mono text-sm print:hidden"><PenTool size={20} className="mr-2" /> Sign Here</div>}
             </div>
             <div className="mt-4 flex justify-center gap-4 print:hidden">
