@@ -341,7 +341,7 @@ export default function App() {
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-[1600px] mx-auto p-4 md:p-8">
+      <main className="flex-1 w-full p-4 md:p-8">
         
         {/* --- TAB: DASHBOARD --- */}
         {activeTab === 'dashboard' && (
@@ -749,7 +749,7 @@ export default function App() {
 
       {/* --- BOTTOM MOBILE-STYLE NAVIGATION --- */}
       <nav className="fixed bottom-0 left-0 w-full bg-[#050505] border-t border-gray-900 pb-safe z-50">
-        <div className="flex justify-around items-center h-20 max-w-lg mx-auto px-2">
+        <div className="flex justify-center md:gap-32 sm:gap-16 gap-4 items-center h-20 w-full px-4">
           
           <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center justify-center w-16 h-full gap-1 transition-colors ${activeTab === 'dashboard' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
             <Wallet size={20} className={activeTab === 'dashboard' ? 'fill-[#cdfc4c]/20' : ''} />
