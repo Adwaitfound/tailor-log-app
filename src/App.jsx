@@ -22,7 +22,7 @@ import {
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 
 // 🔴 YOUR EXACT FIREBASE CONFIGURATION
 const firebaseConfig = {
@@ -69,6 +69,7 @@ export default function App() {
   const [hasDrawn, setHasDrawn] = useState(false);
   const [signatureData, setSignatureData] = useState(null);
   const [signoffTailor, setSignoffTailor] = useState('');
+  const [editingId, setEditingId] = useState(null);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -158,23 +159,61 @@ export default function App() {
     }
   };
 
+  const startEdit = (entry) => {
+    setEditingId(entry.id);
+    if (entry.type === 'production') {
+      setProdForm({
+        date: entry.date || new Date().toISOString().split('T')[0],
+        tailor: entry.tailor,
+        product: entry.product,
+        sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 },
+        pieceRate: entry.pieceRate || 250
+      });
+      setActiveTab('batch');
+    } else if (entry.type === 'payment') {
+      setPayForm({
+        date: entry.date || new Date().toISOString().split('T')[0],
+        tailor: entry.tailor,
+        amount: entry.amount || '',
+        note: entry.note || ''
+      });
+      setActiveTab('pay');
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setProdForm(p => ({ ...p, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
+    setPayForm(p => ({ ...p, amount: '', note: '' }));
+    setActiveTab('dashboard');
+  };
+
   const handleProdSubmit = async (e) => {
     e.preventDefault();
     if (!user) return;
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + (parseInt(val) || 0), 0);
     if (totalPieces === 0) return showToast("Enter at least 1 piece.", "error");
 
-    const newEntry = {
-      ...prodForm,
-      type: 'production',
-      totalPieces,
-      amount: totalPieces * prodForm.pieceRate,
-      timestamp: new Date().toISOString()
-    };
-
     try {
-      await addDoc(collection(db, 'ledger'), newEntry);
-      showToast(`Logged ${totalPieces} items for ${prodForm.tailor}`);
+      if (editingId) {
+        await updateDoc(doc(db, 'ledger', editingId), {
+          ...prodForm,
+          totalPieces,
+          amount: totalPieces * prodForm.pieceRate
+        });
+        showToast(`Updated entry for ${prodForm.tailor}`);
+        setEditingId(null);
+      } else {
+        const newEntry = {
+          ...prodForm,
+          type: 'production',
+          totalPieces,
+          amount: totalPieces * prodForm.pieceRate,
+          timestamp: new Date().toISOString()
+        };
+        await addDoc(collection(db, 'ledger'), newEntry);
+        showToast(`Logged ${totalPieces} items for ${prodForm.tailor}`);
+      }
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
       setActiveTab('dashboard');
     } catch (err) {
@@ -189,18 +228,28 @@ export default function App() {
     const payAmount = parseFloat(payForm.amount);
     if (!payAmount || payAmount <= 0) return showToast("Enter valid amount.", "error");
 
-    const newEntry = {
-      type: 'payment',
-      date: payForm.date,
-      tailor: payForm.tailor,
-      amount: payAmount,
-      note: payForm.note,
-      timestamp: new Date().toISOString()
-    };
-
     try {
-      await addDoc(collection(db, 'ledger'), newEntry);
-      showToast(`Recorded ₹${payAmount} payment to ${payForm.tailor}`);
+      if (editingId) {
+        await updateDoc(doc(db, 'ledger', editingId), {
+          date: payForm.date,
+          tailor: payForm.tailor,
+          amount: payAmount,
+          note: payForm.note
+        });
+        showToast(`Updated payment for ${payForm.tailor}`);
+        setEditingId(null);
+      } else {
+        const newEntry = {
+          type: 'payment',
+          date: payForm.date,
+          tailor: payForm.tailor,
+          amount: payAmount,
+          note: payForm.note,
+          timestamp: new Date().toISOString()
+        };
+        await addDoc(collection(db, 'ledger'), newEntry);
+        showToast(`Recorded ₹${payAmount} payment to ${payForm.tailor}`);
+      }
       setPayForm(prev => ({ ...prev, amount: '', note: '' }));
       setActiveTab('dashboard');
     } catch (err) {
@@ -299,7 +348,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white font-sans flex flex-col pb-20 md:pb-0">
+    <div className="min-h-screen bg-black text-white font-sans flex flex-col pb-20 md:pb-0 !max-w-none !w-[100vw] m-0 p-0 overflow-x-hidden absolute top-0 left-0">
       
       {/* Toast Notification */}
       {toast && (
@@ -461,8 +510,11 @@ export default function App() {
                         <td className="px-6 py-4 text-right font-medium text-emerald-400">
                           {entry.type === 'payment' ? `₹${entry.amount.toLocaleString()}` : '-'}
                         </td>
-                        <td className="px-6 py-4 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => deleteEntry(entry.id)} className="text-gray-600 hover:text-red-500 transition-colors">
+                        <td className="px-6 py-4 text-right opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-end gap-4">
+                          <button onClick={() => startEdit(entry)} className="text-gray-400 hover:text-white transition-colors" title="Edit Entry">
+                            <Edit2 size={16} />
+                          </button>
+                          <button onClick={() => deleteEntry(entry.id)} className="text-gray-600 hover:text-red-500 transition-colors" title="Delete Entry">
                             <Trash2 size={16} />
                           </button>
                         </td>
@@ -528,9 +580,16 @@ export default function App() {
                   </div>
                 </div>
 
-                <button type="submit" className="w-full py-4 font-bold text-black bg-[#cdfc4c] hover:bg-[#b0d93d] rounded-xl transition-all shadow-[0_0_20px_rgba(205,252,76,0.15)] hover:shadow-[0_0_30px_rgba(205,252,76,0.3)]">
-                  Confirm & Save Batch
-                </button>
+                <div className="flex gap-4">
+                  {editingId && (
+                    <button type="button" onClick={cancelEdit} className="w-1/3 py-4 font-bold text-white bg-gray-900 border border-gray-800 hover:bg-gray-800 rounded-xl transition-all">
+                      Cancel
+                    </button>
+                  )}
+                  <button type="submit" className={`${editingId ? 'w-2/3' : 'w-full'} py-4 font-bold text-black bg-[#cdfc4c] hover:bg-[#b0d93d] rounded-xl transition-all shadow-[0_0_20px_rgba(205,252,76,0.15)] hover:shadow-[0_0_30px_rgba(205,252,76,0.3)]`}>
+                    {editingId ? 'Update Batch' : 'Confirm & Save Batch'}
+                  </button>
+                </div>
               </form>
             </div>
           </div>
@@ -567,9 +626,16 @@ export default function App() {
                   <input type="text" value={payForm.note} onChange={e => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Advance for June" className="w-full py-3 px-4 bg-black border border-gray-800 rounded-xl text-white focus:border-emerald-400 outline-none" />
                 </div>
 
-                <button type="submit" className="w-full py-4 font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-all shadow-[0_0_20px_rgba(5,150,105,0.2)]">
-                  Confirm Payment
-                </button>
+                <div className="flex gap-4">
+                  {editingId && (
+                    <button type="button" onClick={cancelEdit} className="w-1/3 py-4 font-bold text-white bg-gray-900 border border-gray-800 hover:bg-gray-800 rounded-xl transition-all">
+                      Cancel
+                    </button>
+                  )}
+                  <button type="submit" className={`${editingId ? 'w-2/3' : 'w-full'} py-4 font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-all shadow-[0_0_20px_rgba(5,150,105,0.2)]`}>
+                    {editingId ? 'Update Payment' : 'Confirm Payment'}
+                  </button>
+                </div>
               </form>
             </div>
           </div>
