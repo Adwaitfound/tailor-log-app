@@ -73,6 +73,7 @@ export default function App() {
   // NEW: Date Range for Sign-Off Receipt
   const [signOffStartDate, setSignOffStartDate] = useState(new Date(new Date().setDate(new Date().getDate() - 6)).toISOString().split('T')[0]); // Default to 1 week
   const [signOffEndDate, setSignOffEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [printFormat, setPrintFormat] = useState('a4'); // 'a4' or 'thermal'
 
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -715,6 +716,25 @@ export default function App() {
 
     return (
       <div className="w-full max-w-3xl mx-auto pb-12 print:pb-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        
+        {/* Dynamic Print Styles for A4 vs Thermal */}
+        <style>
+          {`
+            @media print {
+              ${printFormat === 'thermal' ? `
+                @page { margin: 0; size: 4in 6in; }
+                body { margin: 0; padding: 0; }
+                .thermal-print-area { width: 3.8in !important; margin: 0.1in auto !important; padding: 0.1in !important; font-size: 11px !important; box-shadow: none !important; }
+                .thermal-print-area table { font-size: 10px !important; }
+                .thermal-print-area h1 { font-size: 24px !important; }
+                .thermal-print-area .adjust-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 0.5rem !important; }
+              ` : `
+                @page { margin: 10mm; size: A4 portrait; }
+              `}
+            }
+          `}
+        </style>
+
         <div className="print:hidden mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
             <select value={selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="w-full md:w-auto bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">
@@ -726,22 +746,28 @@ export default function App() {
               <input type="date" value={signOffEndDate} onChange={(e) => { setSignOffEndDate(e.target.value); clearSignature(); }} className="w-full bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
             </div>
           </div>
-          <button onClick={() => window.print()} className="flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white font-bold transition-colors w-full md:w-auto"><Printer size={16} /> Print</button>
+          <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+            <select value={printFormat} onChange={(e) => setPrintFormat(e.target.value)} className="w-full md:w-auto bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">
+              <option value="a4">A4 Printer</option>
+              <option value="thermal">Label Printer (4x6 inches)</option>
+            </select>
+            <button onClick={() => window.print()} className="flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white font-bold transition-colors w-full md:w-auto whitespace-nowrap"><Printer size={16} /> Print</button>
+          </div>
         </div>
 
-        <div className="bg-white text-black p-8 md:p-12 rounded-2xl print:p-0 print:w-full print:shadow-none shadow-2xl relative overflow-hidden">
+        <div className={`bg-white text-black relative overflow-hidden ${printFormat === 'thermal' ? 'thermal-print-area rounded-lg p-4' : 'rounded-2xl p-8 md:p-12 print:p-0 print:w-full print:shadow-none shadow-2xl'}`}>
           {/* Subtle top border for screen preview */}
           <div className="absolute top-0 left-0 w-full h-3 bg-[#022c22] print:hidden"></div>
           
-          <div className="text-center mb-8 border-b-2 border-dashed border-gray-300 pb-6">
-            <h1 className="text-4xl font-black tracking-tighter uppercase mb-1">Poshakh</h1>
+          <div className={`text-center mb-6 border-b-2 border-dashed border-gray-300 ${printFormat === 'thermal' ? 'pb-4' : 'pb-6'}`}>
+            <h1 className={`${printFormat === 'thermal' ? 'text-2xl' : 'text-4xl'} font-black tracking-tighter uppercase mb-1`}>Poshakh</h1>
             <p className="text-gray-500 font-mono text-xs uppercase tracking-widest">Production & Settlement Docket</p>
           </div>
           
           <div className="flex justify-between mb-8 font-mono text-sm border-b border-gray-200 pb-4">
             <div>
               <div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Settlement Period</div>
-              <div className="font-bold text-base">{signOffStartDate === signOffEndDate ? signOffStartDate : `${signOffStartDate} to ${signOffEndDate}`}</div>
+              <div className="font-bold text-base">{signOffStartDate === signOffEndDate ? signOffStartDate : `${signOffStartDate} to \n${signOffEndDate}`}</div>
             </div>
             <div className="text-right">
               <div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-1">Tailor</div>
@@ -755,21 +781,21 @@ export default function App() {
               <table className="w-full text-sm font-mono">
                 <thead className="border-b border-dashed border-gray-300 text-left text-gray-500 text-[10px]">
                   <tr>
-                    <th className="py-3 font-normal uppercase tracking-widest">Date / Style Details</th>
-                    <th className="py-3 font-normal uppercase tracking-widest text-center">Qty</th>
-                    <th className="py-3 font-normal uppercase tracking-widest text-right">Value</th>
+                    <th className="py-2 font-normal uppercase tracking-widest">Date / Details</th>
+                    <th className="py-2 font-normal uppercase tracking-widest text-center">Qty</th>
+                    <th className="py-2 font-normal uppercase tracking-widest text-right">Value</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-dashed divide-gray-200">
                   {periodProduction.map(log => (
                     <tr key={log.id}>
-                      <td className="py-4 pr-4">
+                      <td className="py-3 pr-2">
                         <div className="text-[9px] text-gray-400 mb-0.5">{log.date}</div>
-                        <div className="font-bold text-gray-900 font-sans text-base leading-tight">{log.product}</div>
-                        <div className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest">Sizes: {formatSizes(log.sizes)}</div>
+                        <div className="font-bold text-gray-900 font-sans text-sm leading-tight">{log.product}</div>
+                        <div className="text-[9px] text-gray-500 mt-1 uppercase tracking-widest">Sizes: {formatSizes(log.sizes)}</div>
                       </td>
-                      <td className="py-4 text-center font-bold text-lg">{log.totalPieces}</td>
-                      <td className="py-4 text-right text-gray-600 text-base">₹{log.amount}</td>
+                      <td className="py-3 text-center font-bold text-base">{log.totalPieces}</td>
+                      <td className="py-3 text-right text-gray-600 text-sm font-bold">₹{log.amount}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -783,18 +809,18 @@ export default function App() {
               <table className="w-full text-sm font-mono">
                 <thead className="border-b border-dashed border-gray-300 text-left text-gray-500 text-[10px]">
                   <tr>
-                    <th className="py-3 font-normal uppercase tracking-widest">Date / Details</th>
-                    <th className="py-3 font-normal uppercase tracking-widest text-right">Amount Paid</th>
+                    <th className="py-2 font-normal uppercase tracking-widest">Date / Details</th>
+                    <th className="py-2 font-normal uppercase tracking-widest text-right">Paid</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-dashed divide-gray-200">
                   {periodPayments.map(log => (
                     <tr key={log.id}>
-                      <td className="py-4 pr-4">
+                      <td className="py-3 pr-2">
                         <div className="text-[9px] text-gray-400 mb-0.5">{log.date}</div>
-                        <div className="font-bold text-gray-900 font-sans text-sm">{log.note || 'Cash Payout'}</div>
+                        <div className="font-bold text-gray-900 font-sans text-xs">{log.note || 'Cash Payout'}</div>
                       </td>
-                      <td className="py-4 text-right text-emerald-600 font-bold text-base">- ₹{log.amount}</td>
+                      <td className="py-3 text-right text-emerald-600 font-bold text-sm">- ₹{log.amount}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -802,16 +828,16 @@ export default function App() {
             </div>
           )}
           
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 border-t-2 border-black pt-6">
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Pieces</div><div className="text-xl font-black">{piecesPeriod}</div></div>
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><div className="text-[10px] uppercase tracking-widest font-bold text-gray-400 mb-1">Earned</div><div className="text-xl font-black text-gray-900">₹{earnedPeriod}</div></div>
-            <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100"><div className="text-[10px] uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Cash Paid</div><div className="text-xl font-black text-emerald-700">₹{paidPeriod}</div></div>
-            <div className={`${periodBalance > 0 ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'} p-4 rounded-xl border`}><div className={`text-[10px] uppercase tracking-widest font-bold ${periodBalance > 0 ? 'text-orange-600/70' : 'text-gray-400'} mb-1`}>Period Balance</div><div className={`text-xl font-black ${periodBalance > 0 ? 'text-orange-600' : 'text-gray-900'}`}>₹{periodBalance}</div></div>
+          <div className={`grid ${printFormat === 'thermal' ? 'adjust-grid grid-cols-2 gap-2 mb-6' : 'grid-cols-2 md:grid-cols-4 gap-4 mb-8'} border-t-2 border-black pt-6`}>
+            <div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="text-[9px] uppercase tracking-widest font-bold text-gray-400 mb-1">Pieces</div><div className="text-lg font-black">{piecesPeriod}</div></div>
+            <div className="bg-gray-50 p-3 rounded-xl border border-gray-200"><div className="text-[9px] uppercase tracking-widest font-bold text-gray-400 mb-1">Earned</div><div className="text-lg font-black text-gray-900">₹{earnedPeriod}</div></div>
+            <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100"><div className="text-[9px] uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Cash Paid</div><div className="text-lg font-black text-emerald-700">₹{paidPeriod}</div></div>
+            <div className={`${periodBalance > 0 ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-200'} p-3 rounded-xl border`}><div className={`text-[9px] uppercase tracking-widest font-bold ${periodBalance > 0 ? 'text-orange-600/70' : 'text-gray-400'} mb-1`}>Period Balance</div><div className={`text-lg font-black ${periodBalance > 0 ? 'text-orange-600' : 'text-gray-900'}`}>₹{periodBalance}</div></div>
           </div>
           
-          <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Tailor Signature Authorization</h3>
-            <div className="bg-gray-50 rounded-lg overflow-hidden border border-gray-300 relative mx-auto w-full max-w-md h-40 print:bg-white print:border-black">
+          <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Tailor Authorization</h3>
+            <div className={`bg-gray-50 rounded-lg overflow-hidden border border-gray-300 relative mx-auto w-full ${printFormat === 'thermal' ? 'h-24' : 'max-w-md h-40'} print:bg-white print:border-black`}>
                <canvas ref={canvasRef} width={400} height={160} className="w-full h-full cursor-crosshair touch-none" onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={stopDrawing} onMouseOut={stopDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing} />
                {!signatureLocked && <div className="absolute inset-0 pointer-events-none flex items-center justify-center text-gray-300 font-mono text-sm print:hidden"><PenTool size={20} className="mr-2" /> Sign Here</div>}
             </div>
