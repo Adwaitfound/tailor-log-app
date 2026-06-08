@@ -73,6 +73,13 @@ export default function App() {
   const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
   const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
 
+  // NEW: Dedicated state for manual task assignment
+  const [taskForm, setTaskForm] = useState({
+    product: '',
+    size: '',
+    quantity: 1
+  });
+
   const [prodForm, setProdForm] = useState({
     date: new Date().toISOString().split('T')[0],
     tailor: '',
@@ -258,29 +265,16 @@ export default function App() {
 
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
     if (totalPieces === 0) return showToast("Enter at least one piece.", "error");
-    if (!imageFile && !editingEntryId && !useLocalMode) return showToast("Please attach a QC photo!", "error");
 
-    setIsUploading(true);
-    let finalImageData = null;
+    const entryData = {
+      ...prodForm,
+      type: 'production',
+      totalPieces,
+      amount: totalPieces * prodForm.pieceRate,
+      timestamp: new Date().toISOString()
+    };
 
     try {
-      if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
-
-      const entryData = {
-        ...prodForm,
-        type: 'production',
-        totalPieces,
-        amount: totalPieces * prodForm.pieceRate,
-        timestamp: new Date().toISOString()
-      };
-
-      if (finalImageData) {
-        entryData.imageUrl = finalImageData;
-        entryData.qcStatus = 'pending';
-      } else if (!editingEntryId) {
-        entryData.qcStatus = 'pending';
-      }
-
       if (useLocalMode) {
         let newEntries = [...entries];
         if (editingEntryId) {
@@ -291,7 +285,8 @@ export default function App() {
           newEntries = [{ ...entryData, id: crypto.randomUUID() }, ...newEntries];
           showToast("Local batch logged!");
         }
-        setEntries(newEntries); syncLocal('poshakh_ledger', newEntries);
+        setEntries(newEntries);
+        syncLocal('poshakh_ledger', newEntries);
       } else {
         if (editingEntryId) {
           await updateDoc(doc(db, 'ledger', editingEntryId), entryData);
@@ -301,53 +296,75 @@ export default function App() {
           showToast("Cloud batch logged!");
         }
       }
-      setEditingEntryId(null); setImageFile(null); setImagePreview(null);
+      setEditingEntryId(null);
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
       if (role === 'admin') setActiveTab('ledger');
-    } catch (err) { showToast("Failed to save.", "error"); }
-    finally { setIsUploading(false); }
+    } catch (err) {
+      showToast("Failed to save.", "error");
+    }
   };
 
-  const handleCompleteTask = async (task) => {
+  const handleCompleteTaskGroup = async (group) => {
     if (!prodForm.tailor) return showToast("Please select your name (Tailor) at the top of the 'Add Batch' tab first!", "error");
     if (!imageFile && !useLocalMode) return showToast("Please attach a QC photo to mark as stitched!", "error");
     
-    const rate = task.pieceRate || 250;
-    const totalAmount = task.quantity * rate;
+    const rate = group.pieceRate || 250;
+    const totalAmount = group.totalQuantity * rate;
     setIsUploading(true);
 
     try {
       let finalImageData = null;
       if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
 
-      await updateDoc(doc(db, 'priority_tasks', task.id), {
-        status: 'pending_review',
-        completedBy: prodForm.tailor,
-        completedAt: new Date().toISOString()
-      });
+      if (!useLocalMode) {
+        for (const taskId of group.taskIds) {
+          await updateDoc(doc(db, 'priority_tasks', taskId), {
+            status: 'pending_review',
+            completedBy: prodForm.tailor,
+            completedAt: new Date().toISOString()
+          });
+        }
+      } else {
+        let newTasks = [...tasks];
+        group.taskIds.forEach(id => {
+          newTasks = newTasks.filter(t => t.id !== id);
+        });
+        setTasks(newTasks);
+      }
 
       const entryData = {
         type: 'production',
         date: new Date().toISOString().split('T')[0],
         tailor: prodForm.tailor,
-        product: task.product,
-        sizes: { [task.size || 'M']: task.quantity },
-        totalPieces: task.quantity,
+        product: group.product,
+        sizes: group.sizes,
+        totalPieces: group.totalQuantity,
         pieceRate: rate,
         amount: totalAmount,
         imageUrl: finalImageData,
         qcStatus: 'pending',
         timestamp: new Date().toISOString(),
-        note: 'Priority Queue'
+        note: group.status === 'rejected' ? 'Alteration Fixed' : 'Priority Queue'
       };
 
-      await addDoc(collection(db, 'ledger'), entryData);
+      if (useLocalMode) {
+        const newEntries = [{ ...entryData, id: crypto.randomUUID() }, ...entries];
+        setEntries(newEntries);
+        localStorage.setItem('poshakh_ledger', JSON.stringify(newEntries));
+      } else {
+        await addDoc(collection(db, 'ledger'), entryData);
+      }
       
-      fetch('https://app.poshakhfabrics.com/api/tailor-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: task.id, product: task.product, size: task.size, quantity: task.quantity, tailor: prodForm.tailor })
-      }).catch(() => {});
+      group.taskIds.forEach(taskId => {
+         const t = tasks.find(x => x.id === taskId);
+         if(t) {
+           fetch('https://app.poshakhfabrics.com/api/tailor-webhook', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ taskId: t.id, product: t.product, size: t.size, quantity: t.quantity, tailor: prodForm.tailor })
+           }).catch(() => {});
+         }
+      });
 
       showToast(`Sent to Admin for QC Review!`);
       setImageFile(null); setImagePreview(null);
@@ -355,17 +372,19 @@ export default function App() {
     finally { setIsUploading(false); }
   };
 
-  const confirmCancelTask = async (taskId) => {
+  const confirmCancelTaskGroup = async (group) => {
     try {
       if (useLocalMode) {
-        setTasks(tasks.filter(t => t.id !== taskId));
-        showToast("Task cancelled locally.");
+        setTasks(tasks.filter(t => !group.taskIds.includes(t.id)));
+        showToast("Tasks cancelled locally.");
       } else {
-        await deleteDoc(doc(db, 'priority_tasks', taskId));
-        showToast("Task cancelled and removed from queue.");
+        for (const taskId of group.taskIds) {
+          await deleteDoc(doc(db, 'priority_tasks', taskId));
+        }
+        showToast("Tasks cancelled and removed from queue.");
       }
       setCancellingTaskId(null);
-    } catch (err) { showToast("Failed to cancel task.", "error"); }
+    } catch (err) { showToast("Failed to cancel tasks.", "error"); }
   };
 
   const handleRejectBatch = async (entry) => {
@@ -731,6 +750,26 @@ export default function App() {
     const unfulfilledValue = tasks.reduce((sum, task) => sum + ((task.quantity || 1) * (task.pieceRate || 250)), 0);
     const unfulfilledItems = tasks.reduce((sum, task) => sum + (task.quantity || 1), 0);
 
+    const groupedTasks = Object.values(tasks.reduce((acc, t) => {
+      if (!acc[t.product]) {
+        acc[t.product] = {
+          id: t.product,
+          product: t.product,
+          totalQuantity: 0,
+          sizes: {},
+          taskIds: [],
+          pieceRate: t.pieceRate || 250,
+          status: t.status
+        };
+      }
+      acc[t.product].totalQuantity += Number(t.quantity) || 1;
+      const sizeKey = t.size || 'M';
+      acc[t.product].sizes[sizeKey] = (acc[t.product].sizes[sizeKey] || 0) + (Number(t.quantity) || 1);
+      acc[t.product].taskIds.push(t.id);
+      if (t.status === 'rejected') acc[t.product].status = 'rejected';
+      return acc;
+    }, {}));
+
     return (
       <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in">
         <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-rose-500 flex items-center justify-center gap-2"><ListTodo size={28}/> Priority Tasks</h2><p className="text-gray-400 mt-2">Urgent items out of stock on Shopify/Amazon.</p></div>
@@ -743,50 +782,57 @@ export default function App() {
         {role === 'admin' && (
           <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
             <h3 className="text-white font-bold text-sm mb-4 flex items-center gap-2"><Plus size={16} className="text-rose-500"/> Assign Urgent Task</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="md:col-span-2 relative">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="col-span-2 relative">
                 <div className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-gray-400 cursor-pointer flex items-center justify-between" onClick={() => setIsTaskProductDropdownOpen(!isTaskProductDropdownOpen)}>
-                  <span className="truncate">{prodForm.product || "Select Product..."}</span><ChevronDown size={14}/>
+                  <span className="truncate">{taskForm.product || "Select Product..."}</span><ChevronDown size={14}/>
                 </div>
                 {isTaskProductDropdownOpen && (
-                  <><div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar overflow-hidden">{products.map((p, i) => (<div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50" onClick={() => { setProdForm({...prodForm, product: p.name}); setIsTaskProductDropdownOpen(false); }}>{p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center"><ImageIcon size={12} className="text-gray-600" /></div>}<span className="text-xs font-medium text-gray-200 truncate">{p.name}</span></div>))}</div></>
+                  <><div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar overflow-hidden">{products.map((p, i) => (<div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50" onClick={() => { setTaskForm({...taskForm, product: p.name}); setIsTaskProductDropdownOpen(false); }}>{p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center"><ImageIcon size={12} className="text-gray-600" /></div>}<span className="text-xs font-medium text-gray-200 truncate">{p.name}</span></div>))}</div></>
                 )}
               </div>
-              <select value={prodForm.sizes['M'] > 0 ? 'M' : ''} onChange={(e) => { const size = e.target.value; setProdForm(prev => ({...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0, [size]: 1 }})); }} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
+              
+              <select value={taskForm.size} onChange={(e) => setTaskForm({...taskForm, size: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
                 <option value="">Size</option>{['XS', 'S', 'M', 'L', 'XL'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              
+              <div className="relative">
+                <span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span>
+                <input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" />
+              </div>
+              
               <button onClick={() => {
-                const activeSize = Object.entries(prodForm.sizes).find(([_, q]) => q > 0)?.[0] || 'M';
-                if(!prodForm.product) return showToast("Select a product", "error");
-                addDoc(collection(db, 'priority_tasks'), { product: prodForm.product, size: activeSize, quantity: 1, pieceRate: 250, status: 'pending', createdAt: new Date().toISOString() });
-                setProdForm(prev => ({...prev, product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }})); showToast("Task Assigned!");
-              }} className="bg-white text-black font-bold text-sm rounded-lg py-2 hover:bg-gray-200">Add to Queue</button>
+                if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
+                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, status: 'pending', createdAt: new Date().toISOString() });
+                setTaskForm({ product: '', size: '', quantity: 1 }); 
+                showToast("Task Assigned!");
+              }} className="col-span-2 md:col-span-1 bg-white text-black font-bold text-sm rounded-lg py-2 hover:bg-gray-200">Add to Queue</button>
             </div>
           </div>
         )}
 
         {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
 
-        {tasks.length === 0 ? (
+        {groupedTasks.length === 0 ? (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center"><CheckCircle size={48} className="mx-auto mb-4 text-green-500 opacity-50" /><h3 className="text-xl font-bold text-white mb-1">Queue is Empty!</h3></div>
         ) : (
           <div className="space-y-4">
-            {tasks.map(task => {
-              const productInfo = products.find(p => p.name === task.product);
+            {groupedTasks.map(group => {
+              const productInfo = products.find(p => p.name === group.product);
               return (
-                <div key={task.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col md:flex-row items-center gap-5 shadow-lg relative overflow-hidden group">
+                <div key={group.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col md:flex-row items-center gap-5 shadow-lg relative overflow-hidden group">
                   <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-500"></div>
                   
                   {role === 'admin' && (
-                    cancellingTaskId === task.id ? (
+                    cancellingTaskId === group.id ? (
                       <div className="absolute top-3 right-3 flex items-center gap-2 bg-[#0a0a0a] p-1.5 rounded-lg border border-gray-800 z-20 shadow-xl">
                         <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Cancel Order?</span>
-                        <button onClick={() => confirmCancelTask(task.id)} className="px-3 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase hover:bg-rose-600 transition-colors">Yes</button>
+                        <button onClick={() => confirmCancelTaskGroup(group)} className="px-3 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase hover:bg-rose-600 transition-colors">Yes</button>
                         <button onClick={() => setCancellingTaskId(null)} className="px-3 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase hover:bg-gray-600 transition-colors">No</button>
                       </div>
                     ) : (
                       <button 
-                        onClick={() => setCancellingTaskId(task.id)} 
+                        onClick={() => setCancellingTaskId(group.id)} 
                         className="absolute top-3 right-3 text-gray-500 hover:text-rose-500 transition-colors bg-black/50 p-1.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 z-20"
                         title="Cancel Task"
                       >
@@ -797,11 +843,13 @@ export default function App() {
 
                   {productInfo?.image ? <img src={productInfo.image} className="w-20 h-20 rounded-lg object-cover bg-black" /> : <div className="w-20 h-20 bg-black flex items-center justify-center"><ImageIcon className="text-gray-700"/></div>}
                   <div className="flex-1 text-center md:text-left">
-                    <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex justify-center md:justify-start gap-1"><Clock size={12}/> {task.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
-                    <h3 className="text-lg font-bold text-white leading-tight">{task.product}</h3>
+                    <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex justify-center md:justify-start gap-1"><Clock size={12}/> {group.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
+                    <h3 className="text-lg font-bold text-white leading-tight">{group.product}</h3>
                     <div className="mt-2 flex flex-wrap gap-2 justify-center md:justify-start">
-                      <span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-md font-bold">Size: {task.size || 'M'}</span>
-                      <span className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-md font-bold">Qty: {task.quantity || 1}</span>
+                      {Object.entries(group.sizes).map(([s, qty]) => (
+                        <span key={s} className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-md font-bold">{s}: {qty}</span>
+                      ))}
+                      <span className="bg-[#cdfc4c]/20 text-[#cdfc4c] text-xs px-2.5 py-1 rounded-md font-bold">Total: {group.totalQuantity}</span>
                     </div>
                   </div>
 
@@ -810,7 +858,7 @@ export default function App() {
                         <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                         {imagePreview ? <span className="text-[#cdfc4c] font-bold text-xs">Photo Attached!</span> : <span className="text-gray-400 font-bold text-xs flex items-center gap-2"><Camera size={14}/> Add Photo</span>}
                      </div>
-                     <button disabled={isUploading} onClick={() => handleCompleteTask(task)} className="w-full md:w-auto px-6 py-3 bg-[#cdfc4c] text-black font-black rounded-xl disabled:opacity-50">
+                     <button disabled={isUploading} onClick={() => handleCompleteTaskGroup(group)} className="w-full md:w-auto px-6 py-3 bg-[#cdfc4c] text-black font-black rounded-xl disabled:opacity-50">
                         {isUploading ? 'Uploading...' : 'Mark as Stitched'}
                      </button>
                   </div>
