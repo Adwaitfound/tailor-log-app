@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -57,9 +57,10 @@ export default function App() {
   
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
-  const [rejectingId, setRejectingId] = useState(null); // Added state for reject confirm
+  const [rejectingId, setRejectingId] = useState(null); 
+  const [cancellingTaskId, setCancellingTaskId] = useState(null);
   const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
-  const [isTaskProductDropdownOpen, setIsTaskProductDropdownOpen] = useState(false); // Added for Tasks tab
+  const [isTaskProductDropdownOpen, setIsTaskProductDropdownOpen] = useState(false); 
   const [productSearch, setProductSearch] = useState('');
   
   const [isUploading, setIsUploading] = useState(false);
@@ -67,10 +68,10 @@ export default function App() {
   const [imagePreview, setImagePreview] = useState(null);
   const [lightboxImage, setLightboxImage] = useState(null);
 
-  const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); // 'desc' | 'asc'
-  const [ledgerFilterType, setLedgerFilterType] = useState('all'); // 'all' | 'credits' | 'debits'
-  const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); // 'detailed' | 'outfit' | 'tailor'
-  const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); // 'all' | 'current_cycle' | 'last_cycle'
+  const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
+  const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
+  const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
+  const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
 
   const [prodForm, setProdForm] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -182,7 +183,6 @@ export default function App() {
 
         unsubscribeTasks = onSnapshot(collection(db, 'priority_tasks'), (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          // Show pending OR rejected tasks for the tailor to fix
           const activeTasks = data.filter(t => t.status === 'pending' || t.status === 'rejected').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
           setTasks(activeTasks);
         });
@@ -274,7 +274,6 @@ export default function App() {
         timestamp: new Date().toISOString()
       };
 
-      // Ensure we don't wipe out existing photo/status if editing without a new photo
       if (finalImageData) {
         entryData.imageUrl = finalImageData;
         entryData.qcStatus = 'pending';
@@ -295,7 +294,6 @@ export default function App() {
         setEntries(newEntries); syncLocal('poshakh_ledger', newEntries);
       } else {
         if (editingEntryId) {
-          // Merge with existing so we don't drop imageUrl
           await updateDoc(doc(db, 'ledger', editingEntryId), entryData);
           showToast("Cloud log updated!");
         } else {
@@ -322,14 +320,12 @@ export default function App() {
       let finalImageData = null;
       if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
 
-      // 1. Mark task as pending review (removed from tailor queue)
       await updateDoc(doc(db, 'priority_tasks', task.id), {
         status: 'pending_review',
         completedBy: prodForm.tailor,
         completedAt: new Date().toISOString()
       });
 
-      // 2. Add to ledger with pending QC status
       const entryData = {
         type: 'production',
         date: new Date().toISOString().split('T')[0],
@@ -347,7 +343,6 @@ export default function App() {
 
       await addDoc(collection(db, 'ledger'), entryData);
       
-      // Attempt webhook to Next.js (Fail silently if not set up yet)
       fetch('https://app.poshakhfabrics.com/api/tailor-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -360,7 +355,19 @@ export default function App() {
     finally { setIsUploading(false); }
   };
 
-  // --- QC APPROVE / REJECT LOGIC ---
+  const confirmCancelTask = async (taskId) => {
+    try {
+      if (useLocalMode) {
+        setTasks(tasks.filter(t => t.id !== taskId));
+        showToast("Task cancelled locally.");
+      } else {
+        await deleteDoc(doc(db, 'priority_tasks', taskId));
+        showToast("Task cancelled and removed from queue.");
+      }
+      setCancellingTaskId(null);
+    } catch (err) { showToast("Failed to cancel task.", "error"); }
+  };
+
   const handleRejectBatch = async (entry) => {
     setRejectingId(entry.id);
   };
@@ -368,7 +375,6 @@ export default function App() {
   const confirmRejectBatch = async (entry) => {
     setRejectingId(null);
     
-    // Find the primary size to pass back
     let mainSize = 'M';
     if(entry.sizes) {
        const activeSizes = Object.entries(entry.sizes).filter(([_, qty]) => Number(qty) > 0);
@@ -377,22 +383,18 @@ export default function App() {
 
     try {
       if (useLocalMode) {
-        // 1. Mark as rejected locally
         let newEntries = entries.map(e => e.id === entry.id ? { ...e, qcStatus: 'rejected', rejectedAt: new Date().toISOString() } : e);
         setEntries(newEntries);
         syncLocal('poshakh_ledger', newEntries);
         
-        // 2. Push to local tasks queue
         let newTasks = [...tasks, {
           id: crypto.randomUUID(), product: entry.product, size: mainSize, quantity: entry.totalPieces, pieceRate: entry.pieceRate, status: "rejected", note: "QC REJECTED - ALTERATION REQUIRED", createdAt: new Date().toISOString()
         }];
         setTasks(newTasks);
         showToast(`Batch rejected and returned to ${entry.tailor}'s Tasks!`, "error");
       } else {
-        // 1. Mark as rejected in Cloud Ledger
         await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'rejected', rejectedAt: new Date().toISOString() });
         
-        // 2. Push directly to Cloud Priority Tasks
         await addDoc(collection(db, 'priority_tasks'), {
           product: entry.product, 
           size: mainSize, 
@@ -497,7 +499,6 @@ export default function App() {
     } catch (err) { showToast("Failed to save setup.", "error"); }
   };
 
-  // --- DATA CALCULATIONS & FILTERING ---
   const timeFilteredEntries = useMemo(() => {
     if (dashboardTimeFilter === 'all') return entries;
     const current = getPayCycleDates(0);
@@ -516,7 +517,6 @@ export default function App() {
     return timeFilteredEntries.filter(e => e.tailor === selectedTailorFilter);
   }, [timeFilteredEntries, selectedTailorFilter]);
 
-  // Handle Sort & Credit/Debit Filter for Ledger View
   const finalLedgerEntries = useMemo(() => {
     let result = [...tailorFilteredEntries];
     if (ledgerFilterType === 'credits') result = result.filter(e => e.type === 'production');
@@ -542,13 +542,11 @@ export default function App() {
 
   const pendingBalance = totals.earned - totals.paid;
   
-  // Calculate Equivalent Outfits
   const unpaidPieces = useMemo(() => {
     if (pendingBalance <= 0) return 0;
     let balanceLeft = pendingBalance;
     let piecesToCover = 0;
     
-    // Walk backward through valid production logs
     const recentProduction = [...entries]
       .filter(e => e.type === 'production' && e.qcStatus !== 'rejected' && (selectedTailorFilter === 'All' || e.tailor === selectedTailorFilter))
       .sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -563,7 +561,6 @@ export default function App() {
         piecesToCover += piecesInItem;
         balanceLeft -= valueOfItem;
       } else {
-        // Partial pieces covered by remaining balance
         const fractionalPieces = balanceLeft / rate;
         piecesToCover += fractionalPieces;
         balanceLeft = 0;
@@ -572,7 +569,6 @@ export default function App() {
     return Math.floor(piecesToCover);
   }, [pendingBalance, entries, selectedTailorFilter]);
 
-  // Aggregation Views
   const groupedByProduct = useMemo(() => {
     const groups = {};
     finalLedgerEntries.filter(e => e.type === 'production' && e.qcStatus !== 'rejected').forEach(e => {
@@ -607,14 +603,11 @@ export default function App() {
     return Object.entries(groups).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.earned - a.earned);
   }, [finalLedgerEntries]);
 
-  // Filter products for dropdown search
   const filteredProductsDropdown = products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()));
 
-  // Setup SignOff Dates shortcuts
   const setToCurrentCycle = () => { const c = getPayCycleDates(0); setSignOffStartDate(c.start); setSignOffEndDate(c.end); clearSignature(); };
   const setToLastCycle = () => { const c = getPayCycleDates(1); setSignOffStartDate(c.start); setSignOffEndDate(c.end); clearSignature(); };
 
-  // Helper for size display
   const formatSizes = (sizes) => {
     if (!sizes) return '';
     const activeSizes = Object.entries(sizes).filter(([_, qty]) => Number(qty) > 0);
@@ -701,364 +694,78 @@ export default function App() {
   };
 
   // --- RENDER FUNCTIONS ---
-  if (!role) {
-    return (
-      <div className="min-h-screen w-full bg-[#0a0a0a] flex items-center justify-center p-6">
-        <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
-          <div className="text-center mb-10">
-            <div className="w-16 h-16 bg-white flex items-center justify-center rounded-2xl shadow-lg mx-auto mb-6"><PoshakhLogo size={36} /></div>
-            <h1 className="text-3xl font-black tracking-tight text-white mb-2">Poshakh Sync</h1>
-            <p className="text-gray-400 text-sm">Select your workspace to continue.</p>
+  const renderLogin = () => (
+    <div className="min-h-screen w-full bg-[#0a0a0a] flex items-center justify-center p-6">
+      <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 bg-white flex items-center justify-center rounded-2xl shadow-lg mx-auto mb-6"><PoshakhLogo size={36} /></div>
+          <h1 className="text-3xl font-black tracking-tight text-white mb-2">Poshakh Sync</h1>
+          <p className="text-gray-400 text-sm">Select your workspace to continue.</p>
+        </div>
+        {loginStep === 'select' ? (
+          <div className="space-y-4">
+            <button onClick={() => handleLogin('staff')} className="w-full bg-[#111] border border-gray-800 hover:border-gray-600 p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group">
+              <div className="w-12 h-12 rounded-full bg-gray-800 group-hover:bg-gray-700 flex items-center justify-center text-white transition-colors"><Shirt size={24} /></div>
+              <div className="text-center"><div className="text-lg font-bold text-white">Tailor / Staff</div><div className="text-xs text-gray-500 mt-1">Log daily production batches</div></div>
+            </button>
+            <button onClick={() => setLoginStep('pin')} className="w-full bg-[#cdfc4c] hover:bg-[#b5e638] p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group shadow-lg shadow-[#cdfc4c]/10">
+              <div className="w-12 h-12 rounded-full bg-black/10 group-hover:bg-black/20 flex items-center justify-center text-black transition-colors"><Lock size={24} /></div>
+              <div className="text-center"><div className="text-lg font-bold text-black">Admin Dashboard</div><div className="text-xs text-black/60 mt-1">Full access & financial ledger</div></div>
+            </button>
           </div>
-          {loginStep === 'select' ? (
-            <div className="space-y-4">
-              <button onClick={() => handleLogin('staff')} className="w-full bg-[#111] border border-gray-800 hover:border-gray-600 p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group">
-                <div className="w-12 h-12 rounded-full bg-gray-800 group-hover:bg-gray-700 flex items-center justify-center text-white transition-colors"><Shirt size={24} /></div>
-                <div className="text-center"><div className="text-lg font-bold text-white">Tailor / Staff</div><div className="text-xs text-gray-500 mt-1">Log daily production batches</div></div>
-              </button>
-              <button onClick={() => setLoginStep('pin')} className="w-full bg-[#cdfc4c] hover:bg-[#b5e638] p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group shadow-lg shadow-[#cdfc4c]/10">
-                <div className="w-12 h-12 rounded-full bg-black/10 group-hover:bg-black/20 flex items-center justify-center text-black transition-colors"><Lock size={24} /></div>
-                <div className="text-center"><div className="text-lg font-bold text-black">Admin Dashboard</div><div className="text-xs text-black/60 mt-1">Full access & financial ledger</div></div>
-              </button>
+        ) : (
+          <div className="bg-[#111] border border-gray-800 p-8 rounded-3xl animate-in slide-in-from-bottom-4">
+            <h2 className="text-xl font-bold text-white text-center mb-6">Enter Admin PIN</h2>
+            <div className="flex flex-col gap-4">
+              <input type="password" value={pinInput} onChange={(e) => setPinInput(e.target.value)} placeholder="****" className="w-full text-center tracking-[1em] font-black text-2xl py-4 bg-black border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none" autoFocus/>
+              <button onClick={() => handleLogin('admin')} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl">Unlock</button>
+              <button onClick={() => { setLoginStep('select'); setPinInput(''); }} className="w-full py-3 text-gray-500 hover:text-white text-sm font-bold">Cancel</button>
             </div>
-          ) : (
-            <div className="bg-[#111] border border-gray-800 p-8 rounded-3xl animate-in slide-in-from-bottom-4">
-              <h2 className="text-xl font-bold text-white text-center mb-6">Enter Admin PIN</h2>
-              <div className="flex flex-col gap-4">
-                <input type="password" value={pinInput} onChange={(e) => setPinInput(e.target.value)} placeholder="****" className="w-full text-center tracking-[1em] font-black text-2xl py-4 bg-black border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none" autoFocus />
-                <button onClick={() => handleLogin('admin')} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl">Unlock</button>
-                <button onClick={() => { setLoginStep('select'); setPinInput(''); }} className="w-full py-3 text-gray-500 hover:text-white text-sm font-bold">Cancel</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  const renderLedger = () => (
-    <div className="w-full space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div><h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">Financial Overview</h2><p className="text-gray-400 text-sm mt-1">Real-time ledger and balances.</p></div>
-        <div className="flex items-center gap-2">
-           <select value={dashboardTimeFilter} onChange={(e) => setDashboardTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">
-             <option value="all">All Time</option>
-             <option value="current_cycle">Current Pay Cycle (Fri-Thu)</option>
-             <option value="last_cycle">Last Pay Cycle</option>
-           </select>
-           <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none">
-             <option value="All">All Tailors</option>{tailors.map(t => <option key={t} value={t}>{t} Only</option>)}
-           </select>
-        </div>
-      </div>
-
-      <div className="bg-[#cdfc4c] rounded-2xl p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between shadow-xl">
-        <div>
-           <div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Total Pending Payout</div>
-           <div className="text-5xl md:text-7xl font-black text-black tracking-tighter">₹{pendingBalance.toLocaleString()}</div>
-           {pendingBalance > 0 && <div className="mt-2 text-black/60 font-bold text-sm bg-black/5 inline-block px-3 py-1 rounded-full">👕 Equates to ~{unpaidPieces} unpaid outfits</div>}
-        </div>
-        <div className="mt-6 md:mt-0 md:text-right"><div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Pieces Stitched</div><div className="text-2xl md:text-3xl font-bold text-black">{totals.pieces} <span className="text-lg font-medium opacity-60">Items</span></div></div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-[#ffe4e6] p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-rose-800/60 mb-2">Total Earned Value</div><div className="text-3xl md:text-4xl font-black text-rose-950">₹{totals.earned.toLocaleString()}</div></div>
-        <div className="bg-[#e0f2fe] p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-sky-800/60 mb-2">Total Amount Paid</div><div className="text-3xl md:text-4xl font-black text-sky-950">₹{totals.paid.toLocaleString()}</div></div>
-        <div className="bg-[#111] border border-gray-800 p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-2">Active Roster</div><div className="text-3xl md:text-4xl font-black text-white">{tailors.length}</div></div>
-      </div>
-
-      <div className="bg-[#111] border border-gray-800 rounded-2xl overflow-hidden mt-8">
-        <div className="px-6 py-5 border-b border-gray-800 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-[#0a0a0a]">
-          <h3 className="font-bold text-white tracking-tight text-lg">Transaction History</h3>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={ledgerViewMode} onChange={(e) => setLedgerViewMode(e.target.value)} className="bg-black border border-gray-800 text-xs font-bold text-white py-2 px-3 rounded-lg focus:ring-2 focus:ring-[#cdfc4c] outline-none">
-              <option value="detailed">Detailed View</option>
-              <option value="outfit">Group by Outfit</option>
-              <option value="tailor">Group by Tailor</option>
-            </select>
-            {ledgerViewMode === 'detailed' && (
-               <select value={ledgerFilterType} onChange={(e) => setLedgerFilterType(e.target.value)} className="bg-black border border-gray-800 text-xs font-bold text-white py-2 px-3 rounded-lg focus:ring-2 focus:ring-[#cdfc4c] outline-none">
-                 <option value="all">All Transactions</option>
-                 <option value="credits">Credits Only (+)</option>
-                 <option value="debits">Debits Only (-)</option>
-               </select>
-            )}
-            <span className="text-xs bg-gray-800 text-gray-300 px-3 py-1.5 rounded-full font-bold ml-2">{ledgerViewMode === 'detailed' ? finalLedgerEntries.length : (ledgerViewMode === 'outfit' ? groupedByProduct.length : groupedByTailor.length)} Records</span>
           </div>
-        </div>
-        
-        <div className="overflow-x-auto w-full">
-          {ledgerViewMode === 'detailed' && (
-             finalLedgerEntries.length === 0 ? (
-              <div className="p-12 text-center text-gray-600"><FileText size={40} className="mx-auto mb-4 opacity-20" /><p>No transactions found.</p></div>
-            ) : (
-              <table className="w-full text-sm text-left">
-                <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                  <tr>
-                    <th className="px-6 py-4 cursor-pointer hover:text-white transition-colors" onClick={() => setLedgerSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}>
-                      <div className="flex items-center gap-1">Date <ChevronDown size={12} className={`transition-transform ${ledgerSortOrder === 'asc' ? 'rotate-180' : ''}`}/></div>
-                    </th>
-                    <th className="px-6 py-4">Tailor</th><th className="px-6 py-4">Details</th>
-                    <th className="px-6 py-4 text-center">QC Photo</th>
-                    <th className="px-6 py-4 text-right">Credit (+)</th><th className="px-6 py-4 text-right">Debit (-)</th><th className="px-6 py-4 text-center">Admin Action</th><th className="px-6 py-4 text-right"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800/50">
-                  {finalLedgerEntries.map((entry) => {
-                    const entryImage = products.find(p => p.name === entry.product)?.image;
-                    return (
-                    <tr key={entry.id} className={`transition-colors group ${entry.qcStatus === 'rejected' ? 'bg-rose-900/10' : 'hover:bg-gray-800/30'}`}>
-                      <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
-                      <td className="px-6 py-4 whitespace-nowrap font-bold text-white">{entry.tailor}</td>
-                      <td className="px-6 py-4">
-                        {entry.type === 'production' ? (
-                          <div className="flex items-center gap-3">
-                             {entryImage ? (
-                               <img src={entryImage} className="w-10 h-10 rounded-lg object-cover border border-gray-700 bg-black shrink-0" />
-                             ) : (
-                               <div className="w-10 h-10 rounded-lg bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>
-                             )}
-                             <div>
-                                <div className={`font-bold ${entry.qcStatus === 'rejected' ? 'text-rose-500 line-through' : 'text-white'}`}>{entry.product}</div>
-                                <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
-                                  {entry.totalPieces} pcs @ ₹{entry.pieceRate}
-                                  {formatSizes(entry.sizes) !== '-' && <span className="bg-gray-800 text-gray-300 px-1.5 py-0.5 rounded font-bold text-[9px] uppercase tracking-wider ml-1">Sizes: {formatSizes(entry.sizes)}</span>}
-                                </div>
-                             </div>
-                          </div>
-                        ) : (
-                          <div><div className="text-sky-400 font-bold flex items-center gap-1.5"><Wallet size={14} /> Cash Payout</div>{entry.note && <div className="text-xs text-gray-500 mt-1">{entry.note}</div>}</div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        {entry.imageUrl ? (
-                          <button onClick={() => setLightboxImage(entry.imageUrl)} className="inline-flex items-center gap-1 text-xs font-bold text-blue-400 bg-blue-900/20 px-3 py-1 rounded-full hover:bg-blue-900/40 transition-colors"><Camera size={12}/> View</button>
-                        ) : <span className="text-gray-600 text-xs">-</span>}
-                      </td>
-                      <td className={`px-6 py-4 text-right font-black ${entry.qcStatus === 'rejected' ? 'text-gray-500 line-through' : (entry.type === 'production' ? 'text-[#cdfc4c]' : 'text-rose-500')}`}>{entry.type === 'production' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
-                      <td className="px-6 py-4 text-right font-black text-sky-400">{entry.type === 'payment' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
-                      
-                      <td className="px-6 py-4 text-center">
-                        {entry.type === 'production' && entry.qcStatus === 'pending' && (
-                          rejectingId === entry.id ? (
-                            <div className="flex flex-col gap-1.5 items-center">
-                              <span className="text-[9px] font-black text-rose-500 uppercase">Confirm Reject?</span>
-                              <div className="flex justify-center gap-2">
-                                <button onClick={() => confirmRejectBatch(entry)} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase hover:bg-rose-600">Yes</button>
-                                <button onClick={() => setRejectingId(null)} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase hover:bg-gray-600">No</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex justify-center gap-2">
-                              <button onClick={() => handleApproveBatch(entry)} className="px-2 py-1 bg-green-900/30 text-green-500 rounded text-[10px] font-black uppercase hover:bg-green-500 hover:text-white">Approve</button>
-                              <button onClick={() => handleRejectBatch(entry)} className="px-2 py-1 bg-rose-900/30 text-rose-500 rounded text-[10px] font-black uppercase hover:bg-rose-500 hover:text-white">Reject</button>
-                            </div>
-                          )
-                        )}
-                        {entry.qcStatus === 'approved' && <span className="text-green-500 text-[10px] font-black uppercase tracking-widest bg-green-900/20 px-2 py-1 rounded">Approved</span>}
-                        {entry.qcStatus === 'rejected' && <span className="text-rose-500 text-[10px] font-black uppercase tracking-widest bg-rose-900/20 px-2 py-1 rounded">Rejected</span>}
-                      </td>
-
-                      <td className="px-6 py-4 text-right">
-                        {deletingId === entry.id ? (
-                          <div className="flex justify-end items-center gap-3">
-                            <button onClick={() => deleteEntry(entry.id)} className="text-rose-500 font-bold text-xs bg-rose-500/10 px-3 py-1.5 rounded">Delete</button>
-                            <button onClick={() => setDeletingId(null)} className="text-gray-400 font-bold text-xs hover:text-white">Cancel</button>
-                          </div>
-                        ) : (
-                          <div className="flex justify-end gap-3 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => startEdit(entry)} className="text-[#cdfc4c] hover:text-white"><Edit2 size={16} /></button>
-                            <button onClick={() => setDeletingId(entry.id)} className="text-gray-500 hover:text-rose-500"><Trash2 size={16} /></button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )})}
-                </tbody>
-              </table>
-            )
-          )}
-
-          {ledgerViewMode === 'outfit' && (
-             <table className="w-full text-sm text-left">
-               <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                 <tr><th className="px-6 py-4">Product / Style</th><th className="px-6 py-4 text-center">Total Pieces Stitched</th><th className="px-6 py-4 text-right">Total Value Generated</th></tr>
-               </thead>
-               <tbody className="divide-y divide-gray-800/50">
-                 {groupedByProduct.map((group, idx) => {
-                   const entryImage = products.find(p => p.name === group.name)?.image;
-                   return (
-                   <tr key={idx} className="hover:bg-gray-800/30 transition-colors">
-                     <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          {entryImage ? <img src={entryImage} className="w-12 h-12 rounded-lg object-cover border border-gray-700 bg-black shrink-0" /> : <div className="w-12 h-12 rounded-lg bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>}
-                          <div>
-                            <div className="font-bold text-white text-base">{group.name}</div>
-                            {formatSizes(group.sizes) !== '-' && <div className="text-xs text-gray-500 mt-1 uppercase tracking-widest">Sizes combined: <span className="font-bold text-gray-300">{formatSizes(group.sizes)}</span></div>}
-                          </div>
-                        </div>
-                     </td>
-                     <td className="px-6 py-4 text-center font-black text-xl text-white">{group.pieces}</td>
-                     <td className="px-6 py-4 text-right font-black text-xl text-[#cdfc4c]">₹{group.value.toLocaleString()}</td>
-                   </tr>
-                 )})}
-               </tbody>
-             </table>
-          )}
-
-          {ledgerViewMode === 'tailor' && (
-             <table className="w-full text-sm text-left">
-               <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                 <tr><th className="px-6 py-4">Tailor Name</th><th className="px-6 py-4 text-center">Valid Pieces</th><th className="px-6 py-4 text-right">Total Earned</th><th className="px-6 py-4 text-right">Total Paid</th><th className="px-6 py-4 text-right">Pending Balance</th></tr>
-               </thead>
-               <tbody className="divide-y divide-gray-800/50">
-                 {groupedByTailor.map((group, idx) => (
-                   <tr key={idx} className="hover:bg-gray-800/30 transition-colors">
-                     <td className="px-6 py-4 font-black text-xl text-white flex items-center gap-3"><div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center text-gray-400"><User size={20}/></div>{group.name}</td>
-                     <td className="px-6 py-4 text-center font-bold text-lg text-gray-300">{group.pieces}</td>
-                     <td className="px-6 py-4 text-right font-bold text-lg text-rose-400">₹{group.earned.toLocaleString()}</td>
-                     <td className="px-6 py-4 text-right font-bold text-lg text-sky-400">₹{group.paid.toLocaleString()}</td>
-                     <td className="px-6 py-4 text-right font-black text-xl text-[#cdfc4c]">₹{(group.earned - group.paid).toLocaleString()}</td>
-                   </tr>
-                 ))}
-               </tbody>
-             </table>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
 
   const renderTasks = () => {
-    // Calculate pending money and items from active tasks queue
-    const queuePieces = tasks.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0);
-    const queueValue = tasks.reduce((sum, t) => sum + ((Number(t.quantity) || 0) * (Number(t.pieceRate) || 250)), 0);
+    const unfulfilledValue = tasks.reduce((sum, task) => sum + ((task.quantity || 1) * (task.pieceRate || 250)), 0);
+    const unfulfilledItems = tasks.reduce((sum, task) => sum + (task.quantity || 1), 0);
 
     return (
       <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in">
-        <div className="text-center mb-8"><h2 className="text-3xl font-black text-rose-500 flex justify-center items-center gap-2"><ListTodo size={28}/> Priority Tasks</h2><p className="text-gray-400 mt-2">Urgent items out of stock on Shopify/Amazon.</p></div>
-        
-        {/* Quick summary of the queue */}
-        {tasks.length > 0 && (
-          <div className="grid grid-cols-2 gap-4 mb-6">
-             <div className="bg-[#111] border border-rose-900/30 rounded-2xl p-4 text-center"><div className="text-[10px] uppercase font-bold text-rose-500/70 mb-1">Total Pending Pieces</div><div className="text-3xl font-black text-white">{queuePieces}</div></div>
-             <div className="bg-[#111] border border-rose-900/30 rounded-2xl p-4 text-center"><div className="text-[10px] uppercase font-bold text-rose-500/70 mb-1">Potential Earnings</div><div className="text-3xl font-black text-[#cdfc4c]">₹{queueValue.toLocaleString()}</div></div>
+        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-rose-500 flex items-center justify-center gap-2"><ListTodo size={28}/> Priority Tasks</h2><p className="text-gray-400 mt-2">Urgent items out of stock on Shopify/Amazon.</p></div>
+
+        <div className="grid grid-cols-2 gap-4 mb-8">
+          <div className="bg-[#111] border border-gray-800 p-4 rounded-2xl"><div className="text-[10px] uppercase font-bold text-gray-500 mb-1">Queue Size</div><div className="text-2xl font-black text-white">{unfulfilledItems} Items</div></div>
+          <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl"><div className="text-[10px] uppercase font-bold text-rose-500 mb-1">Potential Earnings</div><div className="text-2xl font-black text-rose-500">₹{unfulfilledValue.toLocaleString()}</div></div>
+        </div>
+
+        {role === 'admin' && (
+          <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
+            <h3 className="text-white font-bold text-sm mb-4 flex items-center gap-2"><Plus size={16} className="text-rose-500"/> Assign Urgent Task</h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="md:col-span-2 relative">
+                <div className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-gray-400 cursor-pointer flex items-center justify-between" onClick={() => setIsTaskProductDropdownOpen(!isTaskProductDropdownOpen)}>
+                  <span className="truncate">{prodForm.product || "Select Product..."}</span><ChevronDown size={14}/>
+                </div>
+                {isTaskProductDropdownOpen && (
+                  <><div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar overflow-hidden">{products.map((p, i) => (<div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50" onClick={() => { setProdForm({...prodForm, product: p.name}); setIsTaskProductDropdownOpen(false); }}>{p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center"><ImageIcon size={12} className="text-gray-600" /></div>}<span className="text-xs font-medium text-gray-200 truncate">{p.name}</span></div>))}</div></>
+                )}
+              </div>
+              <select value={prodForm.sizes['M'] > 0 ? 'M' : ''} onChange={(e) => { const size = e.target.value; setProdForm(prev => ({...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0, [size]: 1 }})); }} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
+                <option value="">Size</option>{['XS', 'S', 'M', 'L', 'XL'].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <button onClick={() => {
+                const activeSize = Object.entries(prodForm.sizes).find(([_, q]) => q > 0)?.[0] || 'M';
+                if(!prodForm.product) return showToast("Select a product", "error");
+                addDoc(collection(db, 'priority_tasks'), { product: prodForm.product, size: activeSize, quantity: 1, pieceRate: 250, status: 'pending', createdAt: new Date().toISOString() });
+                setProdForm(prev => ({...prev, product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }})); showToast("Task Assigned!");
+              }} className="bg-white text-black font-bold text-sm rounded-lg py-2 hover:bg-gray-200">Add to Queue</button>
+            </div>
           </div>
         )}
 
-        {!prodForm.tailor && role === 'staff' && <div className="bg-yellow-500/10 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Select your name in "Add Batch" first!</div>}
-        
-        {role === 'admin' && (
-           <div className="bg-[#111] border border-gray-800 rounded-2xl p-6 mb-8">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4"><PenTool size={16}/> Assign Manual Task</h3>
-              <div className="space-y-4">
-                 
-                 <div className="relative">
-                   <div 
-                     className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none cursor-pointer flex items-center justify-between transition-colors hover:border-gray-600"
-                     onClick={() => setIsTaskProductDropdownOpen(!isTaskProductDropdownOpen)}
-                   >
-                     <div className="flex items-center gap-3 overflow-hidden">
-                       {currentSelectedTaskProductImage ? (
-                         <img src={currentSelectedTaskProductImage} alt="Preview" className="w-8 h-8 rounded-md object-cover border border-gray-800 bg-[#111] shrink-0" />
-                       ) : (
-                         <div className="w-8 h-8 rounded-md bg-[#111] border border-gray-800 flex items-center justify-center shrink-0">
-                           <ImageIcon size={16} className="text-gray-600" />
-                         </div>
-                       )}
-                       <span className={`truncate font-medium ${prodForm.product ? 'text-white' : 'text-gray-500'}`}>
-                         {prodForm.product || "Select Product..."}
-                       </span>
-                     </div>
-                     <ChevronDown size={18} className={`text-gray-500 transition-transform duration-200 ${isTaskProductDropdownOpen ? 'rotate-180' : ''}`} />
-                   </div>
-
-                   {isTaskProductDropdownOpen && (
-                     <>
-                       <div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} />
-                       <div className="absolute z-50 w-full mt-2 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-[400px] flex flex-col overflow-hidden">
-                         <div className="p-3 border-b border-gray-800 bg-[#0a0a0a] relative">
-                            <Search size={16} className="absolute left-6 top-6 text-gray-500" />
-                            <input 
-                              autoFocus
-                              type="text" 
-                              placeholder="Search products..." 
-                              value={productSearch}
-                              onChange={(e) => setProductSearch(e.target.value)}
-                              className="w-full pl-10 pr-4 py-2.5 bg-black border border-gray-800 rounded-lg text-sm text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"
-                            />
-                         </div>
-                         <div className="overflow-y-auto custom-scrollbar flex-1">
-                           {filteredProductsDropdown.map((p, i) => (
-                             <div 
-                               key={i} 
-                               className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800 cursor-pointer transition-colors border-b border-gray-800/50 last:border-0"
-                               onClick={() => {
-                                 setProdForm({...prodForm, product: p.name});
-                                 setIsTaskProductDropdownOpen(false);
-                                 setProductSearch('');
-                               }}
-                             >
-                               {p.image ? (
-                                 <img src={p.image} alt={p.name} className="w-10 h-10 rounded-md object-cover border border-gray-800 bg-black shrink-0" />
-                               ) : (
-                                 <div className="w-10 h-10 rounded-md bg-black border border-gray-800 flex items-center justify-center shrink-0">
-                                   <ImageIcon size={16} className="text-gray-600" />
-                                 </div>
-                               )}
-                               <span className="text-sm font-medium text-gray-200 hover:text-white">{p.name}</span>
-                             </div>
-                           ))}
-                           {filteredProductsDropdown.length === 0 && (
-                             <div className="p-4 text-center text-sm text-gray-500">No products match "{productSearch}"</div>
-                           )}
-                         </div>
-                       </div>
-                     </>
-                   )}
-                 </div>
-
-                 <div className="flex gap-4">
-                    {/* The Fix: Change input to interact with prodForm.sizes */}
-                    <div className="flex-1">
-                      <select 
-                        value={Object.keys(prodForm.sizes).find(key => prodForm.sizes[key] > 0) || 'M'} 
-                        onChange={(e) => {
-                          const newSize = e.target.value;
-                          const currentQty = Object.values(prodForm.sizes).reduce((a,b)=>a+b,0) || 1;
-                          setProdForm(prev => ({...prev, sizes: { XS:0, S:0, M:0, L:0, XL:0, [newSize]: currentQty }}));
-                        }}
-                        className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-white outline-none appearance-none"
-                      >
-                         <option value="XS">Size XS</option><option value="S">Size S</option><option value="M">Size M</option><option value="L">Size L</option><option value="XL">Size XL</option>
-                      </select>
-                    </div>
-                    <div className="flex-1">
-                      <input 
-                        type="number" 
-                        placeholder="Qty" 
-                        min="1" 
-                        value={Object.values(prodForm.sizes).reduce((a,b)=>a+b,0) || ''} 
-                        onChange={(e) => {
-                           const currentSize = Object.keys(prodForm.sizes).find(key => prodForm.sizes[key] > 0) || 'M';
-                           setProdForm(prev => ({...prev, sizes: { XS:0, S:0, M:0, L:0, XL:0, [currentSize]: parseInt(e.target.value) || 0 }}));
-                        }} 
-                        className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-white outline-none"
-                      />
-                    </div>
-                 </div>
-                 <button onClick={async () => {
-                    const currentSize = Object.keys(prodForm.sizes).find(key => prodForm.sizes[key] > 0) || 'M';
-                    const qty = prodForm.sizes[currentSize] || 0;
-                    if(!prodForm.product || qty <= 0) return showToast("Select product & qty", "error");
-                    try {
-                       await addDoc(collection(db, 'priority_tasks'), { product: prodForm.product, size: currentSize, quantity: qty, pieceRate: 250, status: "pending", createdAt: new Date().toISOString() });
-                       showToast("Task assigned to tailors!"); setProdForm(prev => ({...prev, product: '', sizes: {}}));
-                    } catch(e) { showToast("Failed to assign", "error"); }
-                 }} className="w-full py-3 bg-white text-black font-bold rounded-xl">Add to Queue</button>
-              </div>
-           </div>
-        )}
+        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
 
         {tasks.length === 0 ? (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center"><CheckCircle size={48} className="mx-auto mb-4 text-green-500 opacity-50" /><h3 className="text-xl font-bold text-white mb-1">Queue is Empty!</h3></div>
@@ -1067,8 +774,27 @@ export default function App() {
             {tasks.map(task => {
               const productInfo = products.find(p => p.name === task.product);
               return (
-                <div key={task.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col md:flex-row items-center gap-5 shadow-lg relative overflow-hidden">
+                <div key={task.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col md:flex-row items-center gap-5 shadow-lg relative overflow-hidden group">
                   <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-500"></div>
+                  
+                  {role === 'admin' && (
+                    cancellingTaskId === task.id ? (
+                      <div className="absolute top-3 right-3 flex items-center gap-2 bg-[#0a0a0a] p-1.5 rounded-lg border border-gray-800 z-20 shadow-xl">
+                        <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Cancel Order?</span>
+                        <button onClick={() => confirmCancelTask(task.id)} className="px-3 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase hover:bg-rose-600 transition-colors">Yes</button>
+                        <button onClick={() => setCancellingTaskId(null)} className="px-3 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase hover:bg-gray-600 transition-colors">No</button>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setCancellingTaskId(task.id)} 
+                        className="absolute top-3 right-3 text-gray-500 hover:text-rose-500 transition-colors bg-black/50 p-1.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 z-20"
+                        title="Cancel Task"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )
+                  )}
+
                   {productInfo?.image ? <img src={productInfo.image} className="w-20 h-20 rounded-lg object-cover bg-black" /> : <div className="w-20 h-20 bg-black flex items-center justify-center"><ImageIcon className="text-gray-700"/></div>}
                   <div className="flex-1 text-center md:text-left">
                     <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex justify-center md:justify-start gap-1"><Clock size={12}/> {task.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
@@ -1080,7 +806,6 @@ export default function App() {
                   </div>
 
                   <div className="w-full md:w-auto flex flex-col gap-2">
-                     {/* The Tailor must upload a photo to complete a task */}
                      <div className="relative w-full h-12 bg-black border border-gray-800 rounded-xl flex items-center justify-center overflow-hidden hover:border-[#cdfc4c] cursor-pointer">
                         <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
                         {imagePreview ? <span className="text-[#cdfc4c] font-bold text-xs">Photo Attached!</span> : <span className="text-gray-400 font-bold text-xs flex items-center gap-2"><Camera size={14}/> Add Photo</span>}
@@ -1475,6 +1200,196 @@ export default function App() {
               <button onClick={clearSignature} className="text-xs font-bold text-gray-500 hover:text-gray-800 px-4 py-2 uppercase tracking-widest">Clear</button>
               <button onClick={() => setSignatureLocked(true)} className="bg-black text-white text-xs font-bold px-6 py-2 rounded-lg uppercase tracking-widest">Lock Signature</button>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderLedger = () => {
+    return (
+      <div className="w-full space-y-6 animate-in fade-in duration-500">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div><h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">Financial Overview</h2><p className="text-gray-400 text-sm mt-1">Real-time ledger and balances.</p></div>
+          <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+            <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto">
+              <option value="All">All Tailors Combined</option>{tailors.map(t => <option key={t} value={t}>{t} Only</option>)}
+            </select>
+            <select value={dashboardTimeFilter} onChange={(e) => setDashboardTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto">
+              <option value="all">All Time</option>
+              <option value="current_cycle">Current Pay Cycle</option>
+              <option value="last_cycle">Last Pay Cycle</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="bg-[#cdfc4c] rounded-2xl p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between shadow-xl">
+          <div>
+            <div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Total Pending Payout</div>
+            <div className="text-5xl md:text-7xl font-black text-black tracking-tighter">₹{pendingBalance.toLocaleString()}</div>
+            {pendingBalance > 0 && <div className="mt-2 text-sm font-bold text-black/70 flex items-center gap-1.5"><Shirt size={16}/> Equates to ~{unpaidPieces} unpaid outfits</div>}
+          </div>
+          <div className="mt-6 md:mt-0 md:text-right"><div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Pieces Stitched</div><div className="text-2xl md:text-3xl font-bold text-black">{totals.pieces} <span className="text-lg font-medium opacity-60">Items</span></div></div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-[#ffe4e6] p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-rose-800/60 mb-2">Total Earned Value</div><div className="text-3xl md:text-4xl font-black text-rose-950">₹{totals.earned.toLocaleString()}</div></div>
+          <div className="bg-[#e0f2fe] p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-sky-800/60 mb-2">Total Amount Paid</div><div className="text-3xl md:text-4xl font-black text-sky-950">₹{totals.paid.toLocaleString()}</div></div>
+          <div className="bg-[#111] border border-gray-800 p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-2">Active Roster</div><div className="text-3xl md:text-4xl font-black text-white">{tailors.length}</div></div>
+        </div>
+
+        <div className="bg-[#111] border border-gray-800 rounded-2xl overflow-hidden mt-8">
+          <div className="px-6 py-5 border-b border-gray-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[#0a0a0a]">
+            <h3 className="font-bold text-white tracking-tight text-lg">Transaction History</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={ledgerViewMode} onChange={(e) => setLedgerViewMode(e.target.value)} className="bg-black border border-gray-800 text-xs font-bold text-white py-1.5 px-3 rounded-lg outline-none">
+                <option value="detailed">Detailed View</option>
+                <option value="outfit">Group by Outfit</option>
+                <option value="tailor">Group by Tailor</option>
+              </select>
+              {ledgerViewMode === 'detailed' && (
+                <select value={ledgerFilterType} onChange={(e) => setLedgerFilterType(e.target.value)} className="bg-black border border-gray-800 text-xs font-bold text-white py-1.5 px-3 rounded-lg outline-none">
+                  <option value="all">All Transactions</option>
+                  <option value="credits">Credits Only (+)</option>
+                  <option value="debits">Debits Only (-)</option>
+                </select>
+              )}
+              <span className="text-xs bg-gray-800 text-gray-300 px-3 py-1.5 rounded-full font-bold">{ledgerViewMode === 'detailed' ? finalLedgerEntries.length : (ledgerViewMode === 'outfit' ? groupedByProduct.length : groupedByTailor.length)} Records</span>
+            </div>
+          </div>
+          
+          <div className="overflow-x-auto w-full">
+            {ledgerViewMode === 'detailed' ? (
+              finalLedgerEntries.length === 0 ? (
+                <div className="p-12 text-center text-gray-600"><FileText size={40} className="mx-auto mb-4 opacity-20" /><p>No transactions found.</p></div>
+              ) : (
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
+                    <tr>
+                      <th className="px-6 py-4 cursor-pointer hover:text-white transition-colors group flex items-center gap-1" onClick={() => setLedgerSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}>DATE <ChevronDown size={12} className={`transition-transform ${ledgerSortOrder === 'asc' ? 'rotate-180' : ''}`} /></th>
+                      <th className="px-6 py-4">Tailor</th>
+                      <th className="px-6 py-4">Details</th>
+                      <th className="px-6 py-4 text-center">QC Photo</th>
+                      <th className="px-6 py-4 text-right">Credit (+)</th>
+                      <th className="px-6 py-4 text-right">Debit (-)</th>
+                      <th className="px-6 py-4 text-center">Admin Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800/50">
+                    {finalLedgerEntries.map((entry) => {
+                      const entryImage = products.find(p => p.name === entry.product)?.image;
+                      return (
+                      <tr key={entry.id} className={`hover:bg-gray-800/30 transition-colors group ${entry.qcStatus === 'rejected' ? 'opacity-50 bg-rose-900/10' : ''}`}>
+                        <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
+                        <td className="px-6 py-4 whitespace-nowrap font-bold text-white">{entry.tailor}</td>
+                        <td className="px-6 py-4">
+                          {entry.type === 'production' ? (
+                            <div className="flex items-center gap-3">
+                               {entryImage ? (
+                                 <img src={entryImage} className="w-10 h-10 rounded-lg object-cover border border-gray-700 bg-black shrink-0" />
+                               ) : (
+                                 <div className="w-10 h-10 rounded-lg bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>
+                               )}
+                               <div>
+                                 <div className="text-white font-bold">{entry.product}</div>
+                                 <div className="flex items-center gap-2 mt-1">
+                                   <div className="text-xs text-gray-500">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</div>
+                                   <div className="text-[10px] bg-gray-800 text-gray-300 px-2 py-0.5 rounded font-bold uppercase tracking-widest">
+                                     Sizes: {Object.entries(entry.sizes || {}).filter(([_, q]) => Number(q) > 0).map(([s, q]) => `${s}:${q}`).join(', ')}
+                                   </div>
+                                 </div>
+                               </div>
+                            </div>
+                          ) : (
+                            <div><div className="text-sky-400 font-bold flex items-center gap-1.5"><Wallet size={14} /> Cash Payout</div>{entry.note && <div className="text-xs text-gray-500 mt-1">{entry.note}</div>}</div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                           {entry.imageUrl ? (
+                             <button onClick={() => setLightboxImage(entry.imageUrl)} className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 px-3 py-1.5 rounded-full hover:bg-blue-400 hover:text-white transition-colors border border-blue-900/50"><Camera size={12}/> View</button>
+                           ) : <span className="text-gray-700 font-bold text-xs">-</span>}
+                        </td>
+                        <td className="px-6 py-4 text-right font-bold text-white">{entry.type === 'production' ? <span className={entry.qcStatus === 'rejected' ? 'line-through text-gray-600' : 'text-[#cdfc4c]'}>₹{entry.amount.toLocaleString()}</span> : '-'}</td>
+                        <td className="px-6 py-4 text-right font-bold text-sky-400">{entry.type === 'payment' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
+                        <td className="px-6 py-4 text-center">
+                          {deletingId === entry.id ? (
+                            <div className="flex justify-center items-center gap-2 bg-[#0a0a0a] p-1 rounded-lg border border-gray-800">
+                              <span className="text-[10px] font-bold text-rose-500 uppercase px-2">Sure?</span>
+                              <button onClick={() => deleteEntry(entry.id)} className="text-white font-black text-[10px] bg-rose-600 px-3 py-1 rounded hover:bg-rose-500 transition-colors uppercase">Yes</button>
+                              <button onClick={() => setDeletingId(null)} className="text-gray-400 font-black text-[10px] px-3 py-1 rounded hover:bg-gray-800 transition-colors uppercase">No</button>
+                            </div>
+                          ) : rejectingId === entry.id ? (
+                            <div className="flex justify-center items-center gap-2 bg-rose-900/20 p-1 rounded-lg border border-rose-900/50">
+                              <span className="text-[10px] font-bold text-rose-500 uppercase px-2">Confirm Reject?</span>
+                              <button onClick={() => confirmRejectBatch(entry)} className="text-white font-black text-[10px] bg-rose-600 px-3 py-1 rounded hover:bg-rose-500 transition-colors uppercase">Yes</button>
+                              <button onClick={() => setRejectingId(null)} className="text-gray-400 font-black text-[10px] px-3 py-1 rounded hover:bg-gray-800 transition-colors uppercase">No</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-3">
+                               {entry.type === 'production' && entry.qcStatus === 'pending' && (
+                                 <>
+                                   <button onClick={() => handleApproveBatch(entry)} className="px-3 py-1 bg-green-900/20 border border-green-900/50 text-green-500 rounded text-[10px] font-black uppercase tracking-widest hover:bg-green-500 hover:text-white transition-colors">Approve</button>
+                                   <button onClick={() => handleRejectBatch(entry)} className="px-3 py-1 bg-rose-900/20 border border-rose-900/50 text-rose-500 rounded text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-colors">Reject</button>
+                                 </>
+                               )}
+                               {entry.type === 'production' && entry.qcStatus === 'approved' && <span className="text-green-500 text-[10px] font-black uppercase tracking-widest bg-green-900/10 px-2 py-1 rounded border border-green-900/30 flex items-center gap-1"><CheckCircle size={10}/> Approved</span>}
+                               {entry.type === 'production' && entry.qcStatus === 'rejected' && <span className="text-rose-500 text-[10px] font-black uppercase tracking-widest bg-rose-900/10 px-2 py-1 rounded border border-rose-900/30">Rejected</span>}
+                               
+                               <div className="flex items-center gap-2 ml-2 border-l border-gray-800 pl-3">
+                                 <button onClick={() => startEdit(entry)} className="text-gray-500 hover:text-white transition-colors"><Edit2 size={16} /></button>
+                                 <button onClick={() => setDeletingId(entry.id)} className="text-gray-500 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
+                               </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )})}
+                  </tbody>
+                </table>
+              )
+            ) : ledgerViewMode === 'outfit' ? (
+              <table className="w-full text-sm text-left">
+                 <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
+                   <tr><th className="px-6 py-4">Product / Style</th><th className="px-6 py-4 text-center">Total Pieces Stitched</th><th className="px-6 py-4 text-right">Total Value Generated</th></tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-800/50">
+                    {groupedByProduct.map((prod, i) => {
+                      const entryImage = products.find(p => p.name === prod.name)?.image;
+                      return (
+                      <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                        <td className="px-6 py-4">
+                           <div className="flex items-center gap-4">
+                             {entryImage ? <img src={entryImage} className="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-black shrink-0" /> : <div className="w-12 h-12 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={20} className="text-gray-600" /></div>}
+                             <div>
+                               <div className="font-bold text-white text-base">{prod.name}</div>
+                               <div className="text-gray-500 text-xs mt-1">Sizes combined: <span className="text-gray-300 font-bold">{Object.entries(prod.sizes).map(([s,q]) => `${s}:${q}`).join(', ')}</span></div>
+                             </div>
+                           </div>
+                        </td>
+                        <td className="px-6 py-4 text-center font-black text-2xl text-white">{prod.pieces}</td>
+                        <td className="px-6 py-4 text-right font-black text-xl text-[#cdfc4c]">₹{prod.value.toLocaleString()}</td>
+                      </tr>
+                    )})}
+                 </tbody>
+              </table>
+            ) : (
+              <table className="w-full text-sm text-left">
+                 <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
+                   <tr><th className="px-6 py-4">Tailor Name</th><th className="px-6 py-4 text-center">Total Pieces Stitched</th><th className="px-6 py-4 text-right">Total Earned</th><th className="px-6 py-4 text-right">Total Paid (Cash)</th><th className="px-6 py-4 text-right text-[#cdfc4c]">Pending Balance</th></tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-800/50">
+                    {groupedByTailor.map((t, i) => (
+                      <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                        <td className="px-6 py-4 font-black text-white text-lg flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400"><User size={16}/></div> {t.name}</td>
+                        <td className="px-6 py-4 text-center font-bold text-gray-300 text-lg">{t.pieces}</td>
+                        <td className="px-6 py-4 text-right font-bold text-gray-300">₹{t.earned.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-right font-bold text-sky-400">₹{t.paid.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-right font-black text-2xl text-[#cdfc4c]">₹{(t.earned - t.paid).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                 </tbody>
+              </table>
+            )}
           </div>
         </div>
       </div>
