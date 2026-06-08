@@ -5,10 +5,10 @@ import {
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 import { 
   getFirestore, collection, onSnapshot, addDoc, 
-  deleteDoc, doc, setDoc, updateDoc, query, orderBy
+  deleteDoc, doc, setDoc, updateDoc 
 } from 'firebase/firestore';
 
 // Your Real Firebase Config
@@ -38,9 +38,11 @@ const ADMIN_PIN = "1234";
 
 export default function App() {
   // --- AUTH & ROLES ---
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null); 
   const [loginStep, setLoginStep] = useState('select'); 
   const [pinInput, setPinInput] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   // --- CORE STATE ---
   const [entries, setEntries] = useState([]);
@@ -52,28 +54,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('ledger');
   const [selectedTailorFilter, setSelectedTailorFilter] = useState('All');
   const [loading, setLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
   const [toast, setToast] = useState(null);
   const [useLocalMode, setUseLocalMode] = useState(false);
   
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null); 
-  const [cancellingTaskId, setCancellingTaskId] = useState(null);
+  const [cancellingSubId, setCancellingSubId] = useState(null);
   const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
   const [isTaskProductDropdownOpen, setIsTaskProductDropdownOpen] = useState(false); 
   const [productSearch, setProductSearch] = useState('');
   
-  const [isUploading, setIsUploading] = useState(false);
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const [lightboxImage, setLightboxImage] = useState(null);
+  const [expandedTaskGroup, setExpandedTaskGroup] = useState(null);
+  const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
 
-  const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
-  const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
-  const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
-  const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
-
-  // NEW: Dedicated state for manual task assignment
+  // Form States
   const [taskForm, setTaskForm] = useState({
     product: '',
     size: '',
@@ -88,15 +84,22 @@ export default function App() {
     pieceRate: 250
   });
 
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [lightboxImage, setLightboxImage] = useState(null);
+
   const [payForm, setPayForm] = useState({
-    date: new Date().toISOString().split('T')[0],
-    tailor: '',
-    amount: '',
-    note: ''
+    date: new Date().toISOString().split('T')[0], tailor: '', amount: '', note: ''
   });
 
   const [setupForm, setSetupForm] = useState({ tailorsText: '', productsText: '' });
   const [reportForm, setReportForm] = useState({ type: 'ledger', startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0], tailor: 'All' });
+
+  // Formatting & Sorting
+  const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
+  const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
+  const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
+  const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
 
   // Calculate Friday-Thursday Pay Cycles
   const getPayCycleDates = (offsetWeeks = 0) => {
@@ -140,6 +143,7 @@ export default function App() {
     const savedRole = localStorage.getItem('poshakh_role');
     if (savedRole) {
       setRole(savedRole);
+      setIsLoggedIn(true);
       if (savedRole === 'staff') setActiveTab('tasks');
     }
 
@@ -190,6 +194,7 @@ export default function App() {
 
         unsubscribeTasks = onSnapshot(collection(db, 'priority_tasks'), (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          // Show pending AND rejected (needs fix)
           const activeTasks = data.filter(t => t.status === 'pending' || t.status === 'rejected').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
           setTasks(activeTasks);
         });
@@ -216,15 +221,15 @@ export default function App() {
 
   const handleLogin = (selectedRole) => {
     if (selectedRole === 'staff') {
-      setRole('staff'); setActiveTab('tasks'); localStorage.setItem('poshakh_role', 'staff');
+      setRole('staff'); setIsLoggedIn(true); setActiveTab('tasks'); localStorage.setItem('poshakh_role', 'staff');
     } else if (selectedRole === 'admin') {
       if (pinInput === ADMIN_PIN) {
-        setRole('admin'); setActiveTab('ledger'); localStorage.setItem('poshakh_role', 'admin'); setPinInput('');
+        setRole('admin'); setIsLoggedIn(true); setActiveTab('ledger'); localStorage.setItem('poshakh_role', 'admin'); setPinInput('');
       } else { showToast("Incorrect PIN", "error"); setPinInput(''); }
     }
   };
 
-  const handleLogout = () => { setRole(null); setLoginStep('select'); localStorage.removeItem('poshakh_role'); };
+  const handleLogout = () => { setIsLoggedIn(false); setRole(null); setLoginStep('select'); localStorage.removeItem('poshakh_role'); };
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
   const syncLocal = (key, data) => localStorage.setItem(key, JSON.stringify(data));
 
@@ -266,20 +271,33 @@ export default function App() {
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
     if (totalPieces === 0) return showToast("Enter at least one piece.", "error");
 
-    const entryData = {
-      ...prodForm,
-      type: 'production',
-      totalPieces,
-      amount: totalPieces * prodForm.pieceRate,
-      timestamp: new Date().toISOString()
-    };
+    setIsUploading(true);
 
     try {
+      let finalImageData = null;
+      if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
+      // Preserve existing image if editing without uploading a new one
+      else if (editingEntryId && !imageFile) {
+         const existingEntry = entries.find(e => e.id === editingEntryId);
+         if(existingEntry) finalImageData = existingEntry.imageUrl;
+      }
+
+      const existingStatus = editingEntryId ? entries.find(e => e.id === editingEntryId)?.qcStatus : 'pending';
+
+      const entryData = {
+        ...prodForm,
+        type: 'production',
+        totalPieces,
+        amount: totalPieces * prodForm.pieceRate,
+        imageUrl: finalImageData,
+        qcStatus: existingStatus || 'pending',
+        timestamp: new Date().toISOString()
+      };
+
       if (useLocalMode) {
         let newEntries = [...entries];
         if (editingEntryId) {
-          const existingEntry = newEntries.find(e => e.id === editingEntryId);
-          newEntries = newEntries.map(e => e.id === editingEntryId ? { ...existingEntry, ...entryData, id: editingEntryId } : e);
+          newEntries = newEntries.map(e => e.id === editingEntryId ? { ...entryData, id: editingEntryId } : e);
           showToast("Local log updated!");
         } else {
           newEntries = [{ ...entryData, id: crypto.randomUUID() }, ...newEntries];
@@ -293,23 +311,54 @@ export default function App() {
           showToast("Cloud log updated!");
         } else {
           await addDoc(collection(db, 'ledger'), entryData);
-          showToast("Cloud batch logged!");
+          showToast("Cloud batch logged & sent for QC!");
         }
       }
       setEditingEntryId(null);
+      setImageFile(null);
+      setImagePreview(null);
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
       if (role === 'admin') setActiveTab('ledger');
     } catch (err) {
       showToast("Failed to save.", "error");
+    } finally {
+      setIsUploading(false);
     }
   };
 
-  const handleCompleteTaskGroup = async (group) => {
+  const toggleSubTaskSelection = (subId) => {
+    setSelectedSubTaskIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(subId)) newSet.delete(subId);
+      else newSet.add(subId);
+      return newSet;
+    });
+  };
+
+  const handleCompleteTaskSelection = async (group) => {
+    // Find selected items
+    const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
+    
+    if (selectedSubTasks.length === 0) return showToast("Select at least one piece below to mark as stitched!", "error");
     if (!prodForm.tailor) return showToast("Please select your name (Tailor) at the top of the 'Add Batch' tab first!", "error");
     if (!imageFile && !useLocalMode) return showToast("Please attach a QC photo to mark as stitched!", "error");
     
-    const rate = group.pieceRate || 250;
-    const totalAmount = group.totalQuantity * rate;
+    // Group selected pieces by Original Task ID to figure out partial updates
+    const taskUpdates = {}; 
+    selectedSubTasks.forEach(st => {
+       taskUpdates[st.id] = (taskUpdates[st.id] || 0) + 1;
+    });
+
+    // Calculate details for the new ledger entry
+    const pieceRate = selectedSubTasks[0].pieceRate || 250;
+    const totalQuantity = selectedSubTasks.length;
+    const sizesStitched = selectedSubTasks.reduce((acc, st) => {
+       const s = st.size || 'M';
+       acc[s] = (acc[s] || 0) + 1;
+       return acc;
+    }, {});
+    const totalAmount = totalQuantity * pieceRate;
+
     setIsUploading(true);
 
     try {
@@ -317,29 +366,53 @@ export default function App() {
       if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
 
       if (!useLocalMode) {
-        for (const taskId of group.taskIds) {
-          await updateDoc(doc(db, 'priority_tasks', taskId), {
-            status: 'pending_review',
-            completedBy: prodForm.tailor,
-            completedAt: new Date().toISOString()
-          });
+        // Update each original task based on how many pieces were stitched
+        for (const [taskId, completedQty] of Object.entries(taskUpdates)) {
+           const originalTask = tasks.find(t => t.id === taskId);
+           if (!originalTask) continue;
+
+           const remainingQty = (Number(originalTask.quantity) || 1) - completedQty;
+
+           if (remainingQty <= 0) {
+             // Fully complete
+             await updateDoc(doc(db, 'priority_tasks', taskId), {
+               status: 'pending_review',
+               completedBy: prodForm.tailor,
+               completedAt: new Date().toISOString()
+             });
+           } else {
+             // Partially complete (reduce qty)
+             await updateDoc(doc(db, 'priority_tasks', taskId), {
+               quantity: remainingQty
+             });
+             // And create a cloned task for the completed portion to send to review
+             await addDoc(collection(db, 'priority_tasks'), {
+               ...originalTask,
+               quantity: completedQty,
+               status: 'pending_review',
+               completedBy: prodForm.tailor,
+               completedAt: new Date().toISOString()
+             });
+           }
+
+           // Fire webhook for the completed portion
+           fetch('https://app.poshakhfabrics.com/api/tailor-webhook', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ taskId, product: originalTask.product, size: originalTask.size, quantity: completedQty, tailor: prodForm.tailor })
+           }).catch(() => {});
         }
-      } else {
-        let newTasks = [...tasks];
-        group.taskIds.forEach(id => {
-          newTasks = newTasks.filter(t => t.id !== id);
-        });
-        setTasks(newTasks);
       }
 
+      // Add to Ledger
       const entryData = {
         type: 'production',
         date: new Date().toISOString().split('T')[0],
         tailor: prodForm.tailor,
         product: group.product,
-        sizes: group.sizes,
-        totalPieces: group.totalQuantity,
-        pieceRate: rate,
+        sizes: sizesStitched,
+        totalPieces: totalQuantity,
+        pieceRate: pieceRate,
         amount: totalAmount,
         imageUrl: finalImageData,
         qcStatus: 'pending',
@@ -351,40 +424,62 @@ export default function App() {
         const newEntries = [{ ...entryData, id: crypto.randomUUID() }, ...entries];
         setEntries(newEntries);
         localStorage.setItem('poshakh_ledger', JSON.stringify(newEntries));
+        
+        // Faux remove from local tasks array
+        let newTasks = [...tasks];
+        for (const [taskId, completedQty] of Object.entries(taskUpdates)) {
+           const tIndex = newTasks.findIndex(t => t.id === taskId);
+           if(tIndex !== -1) {
+              const remaining = (Number(newTasks[tIndex].quantity) || 1) - completedQty;
+              if (remaining <= 0) newTasks.splice(tIndex, 1);
+              else newTasks[tIndex].quantity = remaining;
+           }
+        }
+        setTasks(newTasks);
       } else {
         await addDoc(collection(db, 'ledger'), entryData);
       }
-      
-      group.taskIds.forEach(taskId => {
-         const t = tasks.find(x => x.id === taskId);
-         if(t) {
-           fetch('https://app.poshakhfabrics.com/api/tailor-webhook', {
-             method: 'POST',
-             headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({ taskId: t.id, product: t.product, size: t.size, quantity: t.quantity, tailor: prodForm.tailor })
-           }).catch(() => {});
-         }
-      });
 
       showToast(`Sent to Admin for QC Review!`);
       setImageFile(null); setImagePreview(null);
-    } catch(err) { showToast("Error completing task", "error"); }
-    finally { setIsUploading(false); }
+      setSelectedSubTaskIds(new Set()); // clear selection
+      
+      // Close accordion if everything in this group was checked
+      if (selectedSubTasks.length === group.subTasks.length) {
+         setExpandedTaskGroup(null);
+      }
+
+    } catch(err) { 
+      showToast("Error completing task", "error"); 
+    } finally { 
+      setIsUploading(false); 
+    }
   };
 
-  const confirmCancelTaskGroup = async (group) => {
+  const executeCancelSubTask = async (subTask) => {
     try {
-      if (useLocalMode) {
-        setTasks(tasks.filter(t => !group.taskIds.includes(t.id)));
-        showToast("Tasks cancelled locally.");
-      } else {
-        for (const taskId of group.taskIds) {
-          await deleteDoc(doc(db, 'priority_tasks', taskId));
-        }
-        showToast("Tasks cancelled and removed from queue.");
+      const originalTask = tasks.find(t => t.id === subTask.id);
+      if(originalTask) {
+         const remaining = (Number(originalTask.quantity) || 1) - 1;
+         
+         if (useLocalMode) {
+            let newTasks = [...tasks];
+            const tIndex = newTasks.findIndex(t => t.id === originalTask.id);
+            if (remaining <= 0) newTasks.splice(tIndex, 1);
+            else newTasks[tIndex].quantity = remaining;
+            setTasks(newTasks);
+            showToast("Item cancelled locally.");
+         } else {
+            if (remaining <= 0) {
+               await deleteDoc(doc(db, 'priority_tasks', originalTask.id));
+            } else {
+               await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: remaining });
+            }
+            showToast("Item removed from queue.");
+         }
       }
-      setCancellingTaskId(null);
-    } catch (err) { showToast("Failed to cancel tasks.", "error"); }
+      setCancellingSubId(null);
+    } catch (err) { showToast("Failed to cancel task.", "error"); }
   };
 
   const handleRejectBatch = async (entry) => {
@@ -393,7 +488,6 @@ export default function App() {
 
   const confirmRejectBatch = async (entry) => {
     setRejectingId(null);
-    
     let mainSize = 'M';
     if(entry.sizes) {
        const activeSizes = Object.entries(entry.sizes).filter(([_, qty]) => Number(qty) > 0);
@@ -669,9 +763,9 @@ export default function App() {
   }, [prodForm.product, products]);
 
   const currentSelectedTaskProductImage = useMemo(() => {
-    const found = products.find(p => p.name === prodForm.product);
+    const found = products.find(p => p.name === taskForm.product);
     return found ? found.image : null;
-  }, [prodForm.product, products]);
+  }, [taskForm.product, products]);
 
   const getCoordinates = (e) => {
     if (!canvasRef.current) return null;
@@ -750,23 +844,29 @@ export default function App() {
     const unfulfilledValue = tasks.reduce((sum, task) => sum + ((task.quantity || 1) * (task.pieceRate || 250)), 0);
     const unfulfilledItems = tasks.reduce((sum, task) => sum + (task.quantity || 1), 0);
 
+    // SMARTER GROUPING: Combine identical products into a single master accordion card, but split quantities into selectable rows
     const groupedTasks = Object.values(tasks.reduce((acc, t) => {
       if (!acc[t.product]) {
         acc[t.product] = {
           id: t.product,
           product: t.product,
-          totalQuantity: 0,
-          sizes: {},
-          taskIds: [],
-          pieceRate: t.pieceRate || 250,
+          subTasks: [], // individual pieces of qty 1
           status: t.status
         };
       }
-      acc[t.product].totalQuantity += Number(t.quantity) || 1;
-      const sizeKey = t.size || 'M';
-      acc[t.product].sizes[sizeKey] = (acc[t.product].sizes[sizeKey] || 0) + (Number(t.quantity) || 1);
-      acc[t.product].taskIds.push(t.id);
+      
+      const qty = Number(t.quantity) || 1;
       if (t.status === 'rejected') acc[t.product].status = 'rejected';
+      
+      // Break down the quantity into distinct units for partial selection
+      for (let i = 0; i < qty; i++) {
+         acc[t.product].subTasks.push({
+            ...t,
+            subId: `${t.id}-${i}`, // unique identifier for the checkbox
+            listIndex: i + 1,
+            quantity: 1 // forced to 1 for the UI row
+         });
+      }
       return acc;
     }, {}));
 
@@ -791,16 +891,10 @@ export default function App() {
                   <><div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar overflow-hidden">{products.map((p, i) => (<div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50" onClick={() => { setTaskForm({...taskForm, product: p.name}); setIsTaskProductDropdownOpen(false); }}>{p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center"><ImageIcon size={12} className="text-gray-600" /></div>}<span className="text-xs font-medium text-gray-200 truncate">{p.name}</span></div>))}</div></>
                 )}
               </div>
-              
               <select value={taskForm.size} onChange={(e) => setTaskForm({...taskForm, size: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
                 <option value="">Size</option>{['XS', 'S', 'M', 'L', 'XL'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              
-              <div className="relative">
-                <span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span>
-                <input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" />
-              </div>
-              
+              <div className="relative"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
               <button onClick={() => {
                 if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
                 addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, status: 'pending', createdAt: new Date().toISOString() });
@@ -819,49 +913,71 @@ export default function App() {
           <div className="space-y-4">
             {groupedTasks.map(group => {
               const productInfo = products.find(p => p.name === group.product);
+              const isExpanded = expandedTaskGroup === group.id;
+              
               return (
-                <div key={group.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col md:flex-row items-center gap-5 shadow-lg relative overflow-hidden group">
+                <div key={group.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all">
                   <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-500"></div>
                   
-                  {role === 'admin' && (
-                    cancellingTaskId === group.id ? (
-                      <div className="absolute top-3 right-3 flex items-center gap-2 bg-[#0a0a0a] p-1.5 rounded-lg border border-gray-800 z-20 shadow-xl">
-                        <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Cancel Order?</span>
-                        <button onClick={() => confirmCancelTaskGroup(group)} className="px-3 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase hover:bg-rose-600 transition-colors">Yes</button>
-                        <button onClick={() => setCancellingTaskId(null)} className="px-3 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase hover:bg-gray-600 transition-colors">No</button>
-                      </div>
-                    ) : (
-                      <button 
-                        onClick={() => setCancellingTaskId(group.id)} 
-                        className="absolute top-3 right-3 text-gray-500 hover:text-rose-500 transition-colors bg-black/50 p-1.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 z-20"
-                        title="Cancel Task"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )
-                  )}
-
-                  {productInfo?.image ? <img src={productInfo.image} className="w-20 h-20 rounded-lg object-cover bg-black" /> : <div className="w-20 h-20 bg-black flex items-center justify-center"><ImageIcon className="text-gray-700"/></div>}
-                  <div className="flex-1 text-center md:text-left">
-                    <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex justify-center md:justify-start gap-1"><Clock size={12}/> {group.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
-                    <h3 className="text-lg font-bold text-white leading-tight">{group.product}</h3>
-                    <div className="mt-2 flex flex-wrap gap-2 justify-center md:justify-start">
-                      {Object.entries(group.sizes).map(([s, qty]) => (
-                        <span key={s} className="bg-gray-800 text-gray-300 text-xs px-2.5 py-1 rounded-md font-bold">{s}: {qty}</span>
-                      ))}
-                      <span className="bg-[#cdfc4c]/20 text-[#cdfc4c] text-xs px-2.5 py-1 rounded-md font-bold">Total: {group.totalQuantity}</span>
+                  {/* SUMMARY HEADER (Clickable to expand) */}
+                  <div className="flex items-center w-full gap-5 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
+                    {productInfo?.image ? <img src={productInfo.image} className="w-16 h-16 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-16 h-16 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
+                    <div className="flex-1">
+                      <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex items-center gap-1"><Clock size={12}/> {group.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
+                      <h3 className="text-lg font-bold text-white leading-tight">{group.product}</h3>
+                      <div className="text-xs text-gray-500 mt-1 font-bold">{group.subTasks.length} pieces pending</div>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-gray-900 flex items-center justify-center text-gray-400 shrink-0">
+                       <ChevronDown size={20} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180 text-white' : ''}`} />
                     </div>
                   </div>
 
-                  <div className="w-full md:w-auto flex flex-col gap-2">
-                     <div className="relative w-full h-12 bg-black border border-gray-800 rounded-xl flex items-center justify-center overflow-hidden hover:border-[#cdfc4c] cursor-pointer">
-                        <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                        {imagePreview ? <span className="text-[#cdfc4c] font-bold text-xs">Photo Attached!</span> : <span className="text-gray-400 font-bold text-xs flex items-center gap-2"><Camera size={14}/> Add Photo</span>}
-                     </div>
-                     <button disabled={isUploading} onClick={() => handleCompleteTaskGroup(group)} className="w-full md:w-auto px-6 py-3 bg-[#cdfc4c] text-black font-black rounded-xl disabled:opacity-50">
-                        {isUploading ? 'Uploading...' : 'Mark as Stitched'}
-                     </button>
-                  </div>
+                  {/* EXPANDED ACCORDION VIEW: Individual Checkboxes */}
+                  {isExpanded && (
+                    <div className="w-full pt-4 border-t border-gray-800 mt-2 animate-in slide-in-from-top-2">
+                      <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 px-1">Select completed pieces:</div>
+                      <div className="flex flex-col gap-2 w-full mb-6">
+                        {group.subTasks.map(st => (
+                          <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-[#cdfc4c]/10 border-[#cdfc4c]' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
+                            <div className="flex items-center gap-3">
+                              <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-[#cdfc4c] bg-[#cdfc4c]' : 'border-gray-600'}`}>
+                                {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
+                              </div>
+                              <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size: {st.size}</span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <span className={`font-bold text-sm ${selectedSubTaskIds.has(st.subId) ? 'text-[#cdfc4c]' : 'text-gray-500'}`}>₹{st.pieceRate}</span>
+                              {role === 'admin' && (
+                                cancellingSubId === st.subId ? (
+                                  <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
+                                    <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                    <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                    <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(st.subId); }} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-gray-900 rounded-lg hover:bg-rose-900/30" title="Cancel this piece">
+                                    <Trash2 size={16} />
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* ACTION BAR: Photo + Mark Stitched */}
+                      <div className="flex flex-col md:flex-row items-center gap-3">
+                         <div className="relative w-full md:w-1/2 h-12 bg-black border border-gray-800 rounded-xl flex items-center justify-center overflow-hidden hover:border-[#cdfc4c] cursor-pointer">
+                            <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                            {imagePreview ? <span className="text-[#cdfc4c] font-bold text-xs">Photo Attached!</span> : <span className="text-gray-400 font-bold text-xs flex items-center gap-2"><Camera size={14}/> Add Photo</span>}
+                         </div>
+                         <button disabled={isUploading} onClick={() => handleCompleteTaskSelection(group)} className="w-full md:w-1/2 px-6 py-3 bg-[#cdfc4c] text-black font-black rounded-xl disabled:opacity-50">
+                            {isUploading ? 'Uploading...' : 'Mark as Stitched'}
+                         </button>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               );
             })}
@@ -1376,7 +1492,7 @@ export default function App() {
                             <div className="flex items-center justify-center gap-3">
                                {entry.type === 'production' && entry.qcStatus === 'pending' && (
                                  <>
-                                   <button onClick={() => handleApproveBatch(entry)} className="px-3 py-1 bg-green-900/20 border border-green-900/50 text-green-500 rounded text-[10px] font-black uppercase tracking-widest hover:bg-green-500 hover:text-white transition-colors">Approve</button>
+                                   <button onClick={() => handleApproveBatch(entry)} className="px-3 py-1 bg-green-900/20 border border-green-900/50 text-green-500 rounded text-[10px] font-black uppercase tracking-widest hover:bg-green-50 hover:text-white transition-colors">Approve</button>
                                    <button onClick={() => handleRejectBatch(entry)} className="px-3 py-1 bg-rose-900/20 border border-rose-900/50 text-rose-500 rounded text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-colors">Reject</button>
                                  </>
                                )}
