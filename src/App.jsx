@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -42,7 +42,6 @@ export default function App() {
   const [role, setRole] = useState(null); 
   const [loginStep, setLoginStep] = useState('select'); 
   const [pinInput, setPinInput] = useState('');
-  const [loginError, setLoginError] = useState('');
 
   // --- CORE STATE ---
   const [entries, setEntries] = useState([]);
@@ -69,12 +68,12 @@ export default function App() {
   const [expandedTaskGroup, setExpandedTaskGroup] = useState(null);
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
 
-  // Form States
-  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1 });
+  // Form States (Platform added)
+  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website' });
 
   const [prodForm, setProdForm] = useState({
     date: new Date().toISOString().split('T')[0],
-    tailor: '', product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: 250
+    tailor: '', product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: 250, platform: 'Shopify / Website'
   });
 
   const [imageFile, setImageFile] = useState(null);
@@ -320,11 +319,17 @@ export default function App() {
     let csvContent = ""; let filename = `poshakh_${reportForm.type}_${reportForm.startDate}_to_${reportForm.endDate}.csv`;
 
     if (reportForm.type === 'ledger') {
-      csvContent = "Date,Tailor,Transaction Type,Product,Quantity,Rate,Credit (Earned),Debit (Paid),Notes\n";
+      csvContent = "Date,Tailor,Transaction Type,Platform,Product,Quantity,Rate,Credit (Earned),Debit (Paid),Notes\n";
       filtered.forEach(e => {
-        const type = e.type === 'production' ? 'Production' : 'Payment'; const product = e.product ? `"${e.product}"` : ''; const qty = e.totalPieces || ''; const rate = e.pieceRate || '';
-        const credit = e.type === 'production' ? e.amount : ''; const debit = e.type === 'payment' ? e.amount : ''; const note = e.note ? `"${e.note}"` : '';
-        csvContent += `${e.date},${e.tailor},${type},${product},${qty},${rate},${credit},${debit},${note}\n`;
+        const type = e.type === 'production' ? 'Production' : 'Payment'; 
+        const product = e.product ? `"${e.product}"` : ''; 
+        const qty = e.totalPieces || ''; 
+        const rate = e.pieceRate || '';
+        const platform = e.platform || 'Shopify / Website';
+        const credit = e.type === 'production' ? e.amount : ''; 
+        const debit = e.type === 'payment' ? e.amount : ''; 
+        const note = e.note ? `"${e.note}"` : '';
+        csvContent += `${e.date},${e.tailor},${type},${platform},${product},${qty},${rate},${credit},${debit},${note}\n`;
       });
     } else if (reportForm.type === 'settlement') {
       csvContent = "Tailor,Pieces Stitched,Total Earned,Total Paid,Pending Balance\n";
@@ -338,13 +343,16 @@ export default function App() {
         if (pieces > 0 || paid > 0) csvContent += `${t},${pieces},${earned},${paid},${pending}\n`;
       });
     } else if (reportForm.type === 'production') {
-      csvContent = "Product,Total Pieces Stitched,Total Value\n";
+      csvContent = "Platform,Product,Total Pieces Stitched,Total Value\n";
       const productStats = {};
       filtered.filter(e => e.type === 'production').forEach(e => {
-        if (!productStats[e.product]) productStats[e.product] = { pieces: 0, value: 0 };
-        productStats[e.product].pieces += Number(e.totalPieces); productStats[e.product].value += Number(e.amount);
+        const plat = e.platform || 'Shopify / Website';
+        const key = `${e.product}-${plat}`;
+        if (!productStats[key]) productStats[key] = { product: e.product, platform: plat, pieces: 0, value: 0 };
+        productStats[key].pieces += Number(e.totalPieces); 
+        productStats[key].value += Number(e.amount);
       });
-      Object.entries(productStats).forEach(([prod, stats]) => csvContent += `"${prod}",${stats.pieces},${stats.value}\n`);
+      Object.values(productStats).forEach(stats => csvContent += `"${stats.platform}","${stats.product}",${stats.pieces},${stats.value}\n`);
     }
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement("a");
@@ -497,7 +505,7 @@ export default function App() {
 
       const entryData = {
         type: 'production', date: new Date().toISOString().split('T')[0], tailor: prodForm.tailor,
-        product: group.product, sizes: sizesStitched, totalPieces: totalQuantity, pieceRate: pieceRate, amount: totalAmount,
+        product: group.product, platform: group.platform || 'Shopify / Website', sizes: sizesStitched, totalPieces: totalQuantity, pieceRate: pieceRate, amount: totalAmount,
         imageUrl: finalImageData, qcStatus: 'pending', timestamp: new Date().toISOString(),
         note: group.status === 'rejected' ? 'Alteration Fixed' : 'Priority Queue'
       };
@@ -536,7 +544,7 @@ export default function App() {
       if (!useLocalMode) {
         await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'rejected', rejectedAt: new Date().toISOString() });
         await addDoc(collection(db, 'priority_tasks'), {
-          product: entry.product, size: mainSize, quantity: entry.totalPieces, pieceRate: entry.pieceRate, 
+          product: entry.product, size: mainSize, quantity: entry.totalPieces, pieceRate: entry.pieceRate, platform: entry.platform || 'Shopify / Website',
           status: "rejected", note: "QC REJECTED - ALTERATION REQUIRED", createdAt: new Date().toISOString()
         });
         showToast(`Batch rejected and returned to ${entry.tailor}'s Tasks!`, "error");
@@ -588,7 +596,7 @@ export default function App() {
   const startEdit = (entry) => {
     setEditingEntryId(entry.id);
     if (entry.type === 'production') {
-      setProdForm({ date: entry.date, tailor: entry.tailor, product: entry.product, sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: entry.pieceRate || 250 });
+      setProdForm({ date: entry.date, tailor: entry.tailor, product: entry.product, sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: entry.pieceRate || 250, platform: entry.platform || 'Shopify / Website' });
       setImagePreview(entry.imageUrl || null);
       setImageFile(null);
       setActiveTab('add-batch');
@@ -689,6 +697,17 @@ export default function App() {
     return Object.entries(groups).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.earned - a.earned);
   }, [finalLedgerEntries]);
 
+  const groupedByPlatform = useMemo(() => {
+    const groups = {};
+    finalLedgerEntries.filter(e => e.type === 'production' && e.qcStatus !== 'rejected').forEach(e => {
+      const plat = e.platform || 'Shopify / Website';
+      if (!groups[plat]) groups[plat] = { pieces: 0, value: 0 };
+      groups[plat].pieces += Number(e.totalPieces) || 0;
+      groups[plat].value += Number(e.amount) || 0;
+    });
+    return Object.entries(groups).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.value - a.value);
+  }, [finalLedgerEntries]);
+
   const currentSelectedProductImage = useMemo(() => {
     const found = products.find(p => p.name === prodForm.product);
     return found ? found.image : null;
@@ -771,15 +790,33 @@ export default function App() {
   );
 
   const renderTasks = () => {
-    // Group tasks logically
-    const groupedTasks = Object.values(tasks.reduce((acc, t) => {
-      if (!acc[t.product]) acc[t.product] = { id: t.product, product: t.product, subTasks: [], status: t.status };
+    // 1. Group tasks by Platform first, then by Product (Outfit)
+    const tasksByPlatform = tasks.reduce((acc, t) => {
+      const plat = t.platform || 'Shopify / Website';
+      if (!acc[plat]) acc[plat] = {};
+      
+      if (!acc[plat][t.product]) {
+        acc[plat][t.product] = { id: `${plat}-${t.product}`, product: t.product, platform: plat, subTasks: [], status: t.status };
+      }
+      
       const qty = Number(t.quantity) || 1;
-      if (t.status === 'rejected') acc[t.product].status = 'rejected';
-      // Create subtask rows representing individual pieces
-      for (let i = 0; i < qty; i++) acc[t.product].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1 });
+      if (t.status === 'rejected') acc[plat][t.product].status = 'rejected';
+      
+      for (let i = 0; i < qty; i++) {
+        acc[plat][t.product].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate });
+      }
       return acc;
-    }, {}));
+    }, {});
+
+    const sortedPlatforms = Object.keys(tasksByPlatform).sort((a, b) => {
+      const order = ['Shopify / Website', 'Amazon', 'Myntra'];
+      const idxA = order.indexOf(a);
+      const idxB = order.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
 
     return (
       <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in">
@@ -788,7 +825,7 @@ export default function App() {
         {role === 'admin' && (
           <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
             <h3 className="text-white font-bold text-sm mb-4 flex items-center gap-2"><Plus size={16} className="text-rose-500"/> Assign Urgent Task</h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
               <div className="col-span-2 relative">
                 <div className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-gray-400 cursor-pointer flex items-center justify-between" onClick={() => setIsTaskProductDropdownOpen(!isTaskProductDropdownOpen)}>
                   <span className="truncate">{taskForm.product || "Select Product..."}</span><ChevronDown size={14}/>
@@ -797,14 +834,19 @@ export default function App() {
                   <><div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar overflow-hidden">{products.map((p, i) => (<div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50" onClick={() => { setTaskForm({...taskForm, product: p.name}); setIsTaskProductDropdownOpen(false); }}>{p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center"><ImageIcon size={12} className="text-gray-600" /></div>}<span className="text-xs font-medium text-gray-200 truncate">{p.name}</span></div>))}</div></>
                 )}
               </div>
+              <select value={taskForm.platform} onChange={(e) => setTaskForm({...taskForm, platform: e.target.value})} className="col-span-2 md:col-span-1 px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
+                <option value="Shopify / Website">Shopify</option>
+                <option value="Amazon">Amazon</option>
+                <option value="Myntra">Myntra</option>
+              </select>
               <select value={taskForm.size} onChange={(e) => setTaskForm({...taskForm, size: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
                 <option value="">Size</option>{['XS', 'S', 'M', 'L', 'XL'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               <div className="relative"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
               <button onClick={() => {
                 if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
-                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, status: 'pending', createdAt: new Date().toISOString() });
-                setTaskForm({ product: '', size: '', quantity: 1 }); showToast("Task Assigned!");
+                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, status: 'pending', createdAt: new Date().toISOString() });
+                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website' }); showToast("Task Assigned!");
               }} className="col-span-2 md:col-span-1 bg-white text-black font-bold text-sm rounded-lg py-2 hover:bg-gray-200">Add to Queue</button>
             </div>
           </div>
@@ -812,79 +854,114 @@ export default function App() {
 
         {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
 
-        {groupedTasks.length === 0 ? (
+        {tasks.length === 0 ? (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center"><CheckCircle size={48} className="mx-auto mb-4 text-green-500 opacity-50" /><h3 className="text-xl font-bold text-white mb-1">Queue is Empty!</h3></div>
         ) : (
-          <div className="space-y-4">
-            {groupedTasks.map(group => {
-              const productInfo = products.find(p => p.name === group.product);
-              const isExpanded = expandedTaskGroup === group.id;
-              
-              return (
-                <div key={group.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all">
-                  <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-500"></div>
-                  
-                  <div className="flex items-center w-full gap-5 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
-                    {productInfo?.image ? <img src={productInfo.image} className="w-16 h-16 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-16 h-16 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
-                    <div className="flex-1">
-                      <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex items-center gap-1"><Clock size={12}/> {group.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
-                      <h3 className="text-lg font-bold text-white leading-tight">{group.product}</h3>
-                      <div className="text-xs text-gray-500 mt-1 font-bold">{group.subTasks.length} pieces pending</div>
-                    </div>
-                    <div className="w-10 h-10 rounded-full bg-gray-900 flex items-center justify-center text-gray-400 shrink-0">
-                       <ChevronDown size={20} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180 text-white' : ''}`} />
-                    </div>
-                  </div>
+          <div className="space-y-8">
+            {sortedPlatforms.map(plat => {
+              const platformGroups = Object.values(tasksByPlatform[plat]);
+              if (platformGroups.length === 0) return null;
 
-                  {isExpanded && (
-                    <div className="w-full pt-4 border-t border-gray-800 mt-2 animate-in slide-in-from-top-2">
-                      <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 px-1">Select completed pieces:</div>
-                      <div className="flex flex-col gap-2 w-full mb-6">
-                        {group.subTasks.map(st => (
-                          <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-[#cdfc4c]/10 border-[#cdfc4c]' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
-                            <div className="flex items-center gap-3">
-                              <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-[#cdfc4c] bg-[#cdfc4c]' : 'border-gray-600'}`}>
-                                {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
-                              </div>
-                              <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size: {st.size}</span>
-                            </div>
-                            <div className="flex items-center gap-4">
-                              <span className={`font-bold text-sm ${selectedSubTaskIds.has(st.subId) ? 'text-[#cdfc4c]' : 'text-gray-500'}`}>₹{st.pieceRate}</span>
-                              {role === 'admin' && (
-                                cancellingSubId === st.subId ? (
-                                  <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
-                                    <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
-                                    <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                    <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+              return (
+                <div key={plat} className="space-y-4">
+                  <h3 className="text-xl font-black text-white flex items-center gap-2 border-b border-gray-800 pb-3 mb-2">
+                    <ShoppingBag size={20} className="text-purple-500" />
+                    {plat} <span className="bg-purple-900/40 text-purple-400 text-xs px-2 py-0.5 rounded border border-purple-900/50 ml-2 font-bold">{platformGroups.length} Styles</span>
+                  </h3>
+                  
+                  {platformGroups.map(group => {
+                    const productInfo = products.find(p => p.name === group.product);
+                    const isExpanded = expandedTaskGroup === group.id;
+                    
+                    return (
+                      <div key={group.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all">
+                        <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-500"></div>
+                        
+                        <div className="flex items-center w-full gap-5 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
+                          {productInfo?.image ? <img src={productInfo.image} className="w-16 h-16 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-16 h-16 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
+                          <div className="flex-1">
+                            <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex items-center gap-1"><Clock size={12}/> {group.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
+                            <h3 className="text-lg font-bold text-white leading-tight">{group.product}</h3>
+                            <div className="text-xs text-gray-500 mt-1 font-bold">{group.subTasks.length} pieces pending</div>
+                          </div>
+                          <div className="w-10 h-10 rounded-full bg-gray-900 flex items-center justify-center text-gray-400 shrink-0">
+                             <ChevronDown size={20} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180 text-white' : ''}`} />
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="w-full pt-4 border-t border-gray-800 mt-2 animate-in slide-in-from-top-2">
+                            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 px-1">Select completed pieces:</div>
+                            <div className="flex flex-col gap-2 w-full mb-6">
+                              {group.subTasks.map(st => (
+                                <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-[#cdfc4c]/10 border-[#cdfc4c]' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-[#cdfc4c] bg-[#cdfc4c]' : 'border-gray-600'}`}>
+                                      {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
+                                    </div>
+                                    <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size: {st.size}</span>
                                   </div>
-                                ) : (
-                                  <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(st.subId); }} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-gray-900 rounded-lg hover:bg-rose-900/30" title="Cancel this piece">
-                                    <Trash2 size={16} />
-                                  </button>
-                                )
-                              )}
+                                  <div className="flex items-center gap-4">
+                                    <span className={`font-bold text-sm ${selectedSubTaskIds.has(st.subId) ? 'text-[#cdfc4c]' : 'text-gray-500'}`}>₹{st.pieceRate}</span>
+                                    {role === 'admin' && (
+                                      cancellingSubId === st.subId ? (
+                                        <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
+                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                          <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                          <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                          <select value={st.platform || 'Shopify / Website'} onChange={async (e) => {
+                                             if(!useLocalMode) {
+                                                const newPlat = e.target.value;
+                                                const originalTask = tasks.find(t => t.id === st.id);
+                                                if(originalTask) {
+                                                   if (Number(originalTask.quantity) <= 1) {
+                                                      await updateDoc(doc(db, 'priority_tasks', originalTask.id), { platform: newPlat });
+                                                   } else {
+                                                      await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
+                                                      await addDoc(collection(db, 'priority_tasks'), { ...originalTask, quantity: 1, platform: newPlat });
+                                                   }
+                                                   showToast("Platform updated!");
+                                                }
+                                             }
+                                          }} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden md:block">
+                                            <option value="Shopify / Website">Shopify</option>
+                                            <option value="Amazon">Amazon</option>
+                                            <option value="Myntra">Myntra</option>
+                                          </select>
+                                          <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-gray-900 rounded-lg hover:bg-rose-900/30" title="Cancel this piece">
+                                            <Trash2 size={16} />
+                                          </button>
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {renderPhotoUploader()}
+
+                            <div className="mt-6">
+                               {(() => {
+                                  const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
+                                  const hasSelection = selectedSubTasks.length > 0;
+                                  const canSubmit = hasSelection && imagePreview;
+                                  return (
+                                    <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteTaskSelection(group)} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10">
+                                      {isUploading ? 'Uploading Securely...' : (!hasSelection ? 'Select Sizes Above' : (!imagePreview ? 'Add QC Photo to Submit' : 'Submit for QC Review'))}
+                                    </button>
+                                  );
+                               })()}
                             </div>
                           </div>
-                        ))}
+                        )}
+
                       </div>
-
-                      {renderPhotoUploader()}
-
-                      <div className="mt-6">
-                         {(() => {
-                            const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
-                            const hasSelection = selectedSubTasks.length > 0;
-                            const canSubmit = hasSelection && imagePreview;
-                            return (
-                              <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteTaskSelection(group)} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10">
-                                {isUploading ? 'Uploading Securely...' : (!hasSelection ? 'Select Sizes Above' : (!imagePreview ? 'Add QC Photo to Submit' : 'Submit for QC Review'))}
-                              </button>
-                            );
-                         })()}
-                      </div>
-                    </div>
-                  )}
-
+                    );
+                  })}
                 </div>
               );
             })}
@@ -899,11 +976,19 @@ export default function App() {
       <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Log' : 'Log Stitched Batch'}</h2><p className="text-gray-400 mt-2">Record daily production turnaround.</p></div>
       <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
         <form onSubmit={handleProdSubmit} className="space-y-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor</label>
               <select value={prodForm.tailor} onChange={(e) => setProdForm({...prodForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none appearance-none">
                 <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Platform</label>
+              <select value={prodForm.platform} onChange={(e) => setProdForm({...prodForm, platform: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none appearance-none">
+                <option value="Shopify / Website">Shopify / Website</option>
+                <option value="Amazon">Amazon</option>
+                <option value="Myntra">Myntra</option>
               </select>
             </div>
             <div>
@@ -1001,6 +1086,7 @@ export default function App() {
               <option value="detailed">Detailed View</option>
               <option value="outfit">Group by Outfit</option>
               <option value="tailor">Group by Tailor</option>
+              <option value="platform">Group by Platform</option>
             </select>
             {ledgerViewMode === 'detailed' && (
               <select value={ledgerFilterType} onChange={(e) => setLedgerFilterType(e.target.value)} className="bg-black border border-gray-800 text-xs font-bold text-white py-1.5 px-3 rounded-lg outline-none">
@@ -1009,7 +1095,7 @@ export default function App() {
                 <option value="debits">Debits Only (-)</option>
               </select>
             )}
-            <span className="text-xs bg-gray-800 text-gray-300 px-3 py-1.5 rounded-full font-bold">{ledgerViewMode === 'detailed' ? finalLedgerEntries.length : (ledgerViewMode === 'outfit' ? groupedByProduct.length : groupedByTailor.length)} Records</span>
+            <span className="text-xs bg-gray-800 text-gray-300 px-3 py-1.5 rounded-full font-bold">{ledgerViewMode === 'detailed' ? finalLedgerEntries.length : (ledgerViewMode === 'outfit' ? groupedByProduct.length : (ledgerViewMode === 'platform' ? groupedByPlatform.length : groupedByTailor.length))} Records</span>
           </div>
         </div>
         
@@ -1047,10 +1133,13 @@ export default function App() {
                              )}
                              <div>
                                <div className="text-white font-bold">{entry.product}</div>
-                               <div className="flex items-center gap-2 mt-1">
+                               <div className="flex flex-wrap items-center gap-2 mt-1">
                                  <div className="text-xs text-gray-500">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</div>
                                  <div className="text-[10px] bg-gray-800 text-gray-300 px-2 py-0.5 rounded font-bold uppercase tracking-widest">
                                    Sizes: {Object.entries(entry.sizes || {}).filter(([_, q]) => Number(q) > 0).map(([s, q]) => `${s}:${q}`).join(', ')}
+                                 </div>
+                                 <div className="text-[10px] bg-purple-900/20 text-purple-400 border border-purple-900/50 px-2 py-0.5 rounded font-bold uppercase tracking-widest">
+                                   {entry.platform || 'Shopify / Website'}
                                  </div>
                                </div>
                              </div>
@@ -1125,6 +1214,21 @@ export default function App() {
                     <td className="px-6 py-4 text-right font-black text-[#cdfc4c] text-lg">₹{prod.value.toLocaleString()}</td>
                   </tr>
                 )})}
+              </tbody>
+            </table>
+          ) : ledgerViewMode === 'platform' ? (
+            <table className="w-full text-sm text-left">
+              <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
+                <tr><th className="px-6 py-4">Sales Platform</th><th className="px-6 py-4 text-center">Total Pieces Stitched</th><th className="px-6 py-4 text-right">Production Cost Generated</th></tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {groupedByPlatform.map((plat, i) => (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-6 py-4 font-bold text-white text-lg flex items-center gap-3"><div className="w-8 h-8 rounded-xl bg-purple-900/20 border border-purple-900/50 flex items-center justify-center text-purple-400"><ShoppingBag size={14}/></div> {plat.name}</td>
+                    <td className="px-6 py-4 text-center font-bold text-gray-300">{plat.pieces}</td>
+                    <td className="px-6 py-4 text-right font-black text-[#cdfc4c] text-lg">₹{plat.value.toLocaleString()}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           ) : (
@@ -1335,7 +1439,7 @@ export default function App() {
                         <div className="text-[9px] text-gray-400 mb-0.5">{log.date}</div>
                         <div className="font-bold text-gray-900 font-sans text-sm leading-tight">{log.product}</div>
                         <div className="text-[9px] text-gray-500 mt-1 uppercase tracking-widest flex items-center gap-2">
-                          Sizes: {formatSizes(log.sizes)}
+                          {log.platform || 'Shopify / Website'} | Sizes: {formatSizes(log.sizes)}
                           {log.qcStatus === 'rejected' && <span className="text-rose-500 font-black bg-rose-100 px-1 rounded">REJECTED</span>}
                         </div>
                       </td>
