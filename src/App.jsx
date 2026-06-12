@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -42,6 +42,7 @@ export default function App() {
   const [role, setRole] = useState(null); 
   const [loginStep, setLoginStep] = useState('select'); 
   const [pinInput, setPinInput] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   // --- CORE STATE ---
   const [entries, setEntries] = useState([]);
@@ -66,10 +67,11 @@ export default function App() {
   const [productSearch, setProductSearch] = useState('');
   
   const [expandedTaskGroup, setExpandedTaskGroup] = useState(null);
+  const [expandedPlatforms, setExpandedPlatforms] = useState(new Set(['Shopify / Website']));
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
 
   // Form States (Platform added)
-  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website' });
+  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any' });
 
   const [prodForm, setProdForm] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -85,20 +87,7 @@ export default function App() {
   const photoCanvasRef = useRef(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
-  const [payForm, setPayForm] = useState({
-    date: new Date().toISOString().split('T')[0], tailor: '', amount: '', note: ''
-  });
-
-  const [setupForm, setSetupForm] = useState({ tailorsText: '', productsText: '' });
-  const [reportForm, setReportForm] = useState({ type: 'ledger', startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0], tailor: 'All' });
-
-  // Formatting & Sorting
-  const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
-  const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
-  const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
-  const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
-
-  // Pay Cycles
+  // Pay Cycles & Pay Form setup
   const getPayCycleDates = (offsetWeeks = 0) => {
     const today = new Date();
     const dayOfWeek = today.getDay(); 
@@ -111,6 +100,21 @@ export default function App() {
   };
 
   const currentCycle = getPayCycleDates(0);
+  const lastCycle = getPayCycleDates(1);
+
+  const [payForm, setPayForm] = useState({
+    date: new Date().toISOString().split('T')[0], tailor: '', amount: '', note: '', periodStart: lastCycle.start, periodEnd: lastCycle.end
+  });
+
+  const [setupForm, setSetupForm] = useState({ tailorsText: '', productsText: '' });
+  const [reportForm, setReportForm] = useState({ type: 'ledger', startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0], tailor: 'All' });
+
+  // Formatting & Sorting
+  const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
+  const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
+  const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
+  const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
+
   const [signOffStartDate, setSignOffStartDate] = useState(currentCycle.start);
   const [signOffEndDate, setSignOffEndDate] = useState(currentCycle.end);
   const [printFormat, setPrintFormat] = useState('a4'); 
@@ -119,6 +123,7 @@ export default function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
+  // --- INITIALIZATION ---
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
@@ -128,6 +133,7 @@ export default function App() {
       .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
       .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
+      .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
     `;
     document.head.appendChild(style);
 
@@ -179,7 +185,6 @@ export default function App() {
               productsText: (data.products || []).map(p => p.image ? `${p.name}\t${p.image}` : p.name).join('\n')
             });
             setProdForm(prev => ({ ...prev, tailor: data.tailors?.[0] || '', product: data.products?.[0]?.name || '' }));
-            setPayForm(prev => ({ ...prev, tailor: data.tailors?.[0] || '' }));
           }
         });
 
@@ -495,7 +500,6 @@ export default function App() {
                ...originalTask, quantity: completedQty, status: 'pending_review', completedBy: prodForm.tailor, completedAt: new Date().toISOString()
              });
            }
-           // Webhook Fire
            fetch('https://app.poshakhfabrics.com/api/tailor-webhook', {
              method: 'POST', headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({ taskId, product: originalTask.product, size: originalTask.size, quantity: completedQty, tailor: prodForm.tailor })
@@ -545,7 +549,7 @@ export default function App() {
         await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'rejected', rejectedAt: new Date().toISOString() });
         await addDoc(collection(db, 'priority_tasks'), {
           product: entry.product, size: mainSize, quantity: entry.totalPieces, pieceRate: entry.pieceRate, platform: entry.platform || 'Shopify / Website',
-          status: "rejected", note: "QC REJECTED - ALTERATION REQUIRED", createdAt: new Date().toISOString()
+          status: "rejected", note: "QC REJECTED - ALTERATION REQUIRED", assignee: entry.tailor, createdAt: new Date().toISOString()
         });
         showToast(`Batch rejected and returned to ${entry.tailor}'s Tasks!`, "error");
       }
@@ -566,7 +570,11 @@ export default function App() {
     const payAmount = parseFloat(payForm.amount);
     if (!payForm.tailor || !payAmount || payAmount <= 0) return showToast("Enter valid amount.", "error");
 
-    const entryData = { type: 'payment', date: payForm.date, tailor: payForm.tailor, amount: payAmount, note: payForm.note, timestamp: new Date().toISOString() };
+    // Smart Tagging for the ledger Note
+    let smartNote = payForm.note ? `${payForm.note} ` : '';
+    smartNote += `(Settled: ${payForm.periodStart} to ${payForm.periodEnd})`;
+
+    const entryData = { type: 'payment', date: payForm.date, tailor: payForm.tailor, amount: payAmount, note: smartNote.trim(), timestamp: new Date().toISOString() };
     try {
       if (useLocalMode) {
         let newEntries = [...entries];
@@ -578,6 +586,7 @@ export default function App() {
         else await addDoc(collection(db, 'ledger'), entryData);
       }
       setEditingEntryId(null); setPayForm(prev => ({ ...prev, amount: '', note: '' })); setActiveTab('ledger');
+      showToast("Payment Logged Successfully!");
     } catch (err) { showToast("Failed to save.", "error"); }
   };
 
@@ -601,7 +610,7 @@ export default function App() {
       setImageFile(null);
       setActiveTab('add-batch');
     } else {
-      setPayForm({ date: entry.date, tailor: entry.tailor, amount: entry.amount, note: entry.note || '' });
+      setPayForm({ date: entry.date, tailor: entry.tailor, amount: entry.amount, note: entry.note || '', periodStart: currentCycle.start, periodEnd: currentCycle.end });
       setActiveTab('pay');
     }
   };
@@ -713,6 +722,14 @@ export default function App() {
     return found ? found.image : null;
   }, [prodForm.product, products]);
 
+  const getUrgencyStyles = (createdAt) => {
+    if (!createdAt) return 'border-gray-800 bg-[#111]';
+    const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
+    if (hours > 48) return 'border-red-500 bg-red-950/20 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse-slow';
+    if (hours > 24) return 'border-orange-500 bg-orange-950/20';
+    return 'border-gray-800 bg-[#111]';
+  };
+
   const renderLogin = () => (
     <div className="min-h-screen w-full bg-[#0a0a0a] flex items-center justify-center p-6">
       <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
@@ -792,15 +809,32 @@ export default function App() {
   const renderTasks = () => {
     // 1. Group tasks by Platform first, then by Product (Outfit)
     const tasksByPlatform = tasks.reduce((acc, t) => {
+      // If Taylor is looking, hide tasks assigned to someone else
+      if (role === 'staff' && t.assignee && t.assignee !== 'Any' && t.assignee !== prodForm.tailor) {
+         return acc;
+      }
+
       const plat = t.platform || 'Shopify / Website';
       if (!acc[plat]) acc[plat] = {};
       
       if (!acc[plat][t.product]) {
-        acc[plat][t.product] = { id: `${plat}-${t.product}`, product: t.product, platform: plat, subTasks: [], status: t.status };
+        acc[plat][t.product] = { 
+          id: `${plat}-${t.product}`, 
+          product: t.product, 
+          platform: plat, 
+          subTasks: [], 
+          status: t.status,
+          oldestTask: t.createdAt
+        };
       }
       
       const qty = Number(t.quantity) || 1;
       if (t.status === 'rejected') acc[plat][t.product].status = 'rejected';
+      
+      // Update oldest task to drive the urgency heatmap border
+      if (new Date(t.createdAt) < new Date(acc[plat][t.product].oldestTask)) {
+          acc[plat][t.product].oldestTask = t.createdAt;
+      }
       
       for (let i = 0; i < qty; i++) {
         acc[plat][t.product].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate });
@@ -818,9 +852,13 @@ export default function App() {
       return a.localeCompare(b);
     });
 
+    // Today's Production logic for Quota Rings
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayProduction = entries.filter(e => e.type === 'production' && e.date === todayStr && e.qcStatus !== 'rejected');
+
     return (
-      <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in">
-        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-rose-500 flex items-center justify-center gap-2"><ListTodo size={28}/> Priority Tasks</h2><p className="text-gray-400 mt-2">Urgent items out of stock on Shopify/Amazon.</p></div>
+      <div className="w-full max-w-4xl mx-auto space-y-6 animate-in fade-in">
+        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-2"><ListTodo size={28} className="text-rose-500"/> Priority Tasks</h2><p className="text-gray-400 mt-2">Urgent items grouped by Sales Channel.</p></div>
 
         {role === 'admin' && (
           <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
@@ -834,7 +872,7 @@ export default function App() {
                   <><div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar overflow-hidden">{products.map((p, i) => (<div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50" onClick={() => { setTaskForm({...taskForm, product: p.name}); setIsTaskProductDropdownOpen(false); }}>{p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center"><ImageIcon size={12} className="text-gray-600" /></div>}<span className="text-xs font-medium text-gray-200 truncate">{p.name}</span></div>))}</div></>
                 )}
               </div>
-              <select value={taskForm.platform} onChange={(e) => setTaskForm({...taskForm, platform: e.target.value})} className="col-span-2 md:col-span-1 px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
+              <select value={taskForm.platform} onChange={(e) => setTaskForm({...taskForm, platform: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
                 <option value="Shopify / Website">Shopify</option>
                 <option value="Amazon">Amazon</option>
                 <option value="Myntra">Myntra</option>
@@ -842,12 +880,15 @@ export default function App() {
               <select value={taskForm.size} onChange={(e) => setTaskForm({...taskForm, size: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
                 <option value="">Size</option>{['XS', 'S', 'M', 'L', 'XL'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              <select value={taskForm.assignee} onChange={(e) => setTaskForm({...taskForm, assignee: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none text-purple-400 font-bold">
+                <option value="Any">Assign: Any</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
               <div className="relative"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
               <button onClick={() => {
                 if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
-                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, status: 'pending', createdAt: new Date().toISOString() });
-                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website' }); showToast("Task Assigned!");
-              }} className="col-span-2 md:col-span-1 bg-white text-black font-bold text-sm rounded-lg py-2 hover:bg-gray-200">Add to Queue</button>
+                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, status: 'pending', createdAt: new Date().toISOString() });
+                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any' }); showToast("Task Assigned!");
+              }} className="col-span-2 md:col-span-1 bg-[#cdfc4c] text-black font-black text-sm rounded-lg py-2 hover:bg-[#b5e638]">Add</button>
             </div>
           </div>
         )}
@@ -857,116 +898,220 @@ export default function App() {
         {tasks.length === 0 ? (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center"><CheckCircle size={48} className="mx-auto mb-4 text-green-500 opacity-50" /><h3 className="text-xl font-bold text-white mb-1">Queue is Empty!</h3></div>
         ) : (
-          <div className="space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
             {sortedPlatforms.map(plat => {
-              const platformGroups = Object.values(tasksByPlatform[plat]);
+              const platformGroups = Object.values(tasksByPlatform[plat]).sort((a, b) => a.product.localeCompare(b.product)); // Alphabetical Sort
               if (platformGroups.length === 0) return null;
 
-              return (
-                <div key={plat} className="space-y-4">
-                  <h3 className="text-xl font-black text-white flex items-center gap-2 border-b border-gray-800 pb-3 mb-2">
-                    <ShoppingBag size={20} className="text-purple-500" />
-                    {plat} <span className="bg-purple-900/40 text-purple-400 text-xs px-2 py-0.5 rounded border border-purple-900/50 ml-2 font-bold">{platformGroups.length} Styles</span>
-                  </h3>
-                  
-                  {platformGroups.map(group => {
-                    const productInfo = products.find(p => p.name === group.product);
-                    const isExpanded = expandedTaskGroup === group.id;
-                    
-                    return (
-                      <div key={group.id} className="bg-[#111] border border-rose-900/50 rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all">
-                        <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-500"></div>
-                        
-                        <div className="flex items-center w-full gap-5 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
-                          {productInfo?.image ? <img src={productInfo.image} className="w-16 h-16 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-16 h-16 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
-                          <div className="flex-1">
-                            <div className="text-[10px] text-rose-500 font-bold uppercase mb-1 flex items-center gap-1"><Clock size={12}/> {group.status === 'rejected' ? 'REJECTED - START ALTERATION' : 'URGENT ORDER'}</div>
-                            <h3 className="text-lg font-bold text-white leading-tight">{group.product}</h3>
-                            <div className="text-xs text-gray-500 mt-1 font-bold">{group.subTasks.length} pieces pending</div>
-                          </div>
-                          <div className="w-10 h-10 rounded-full bg-gray-900 flex items-center justify-center text-gray-400 shrink-0">
-                             <ChevronDown size={20} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180 text-white' : ''}`} />
-                          </div>
-                        </div>
+              const isPlatExpanded = expandedPlatforms.has(plat);
+              const totalPiecesNeeded = platformGroups.reduce((sum, g) => sum + g.subTasks.length, 0);
+              
+              // Quota logic (Assuming goal is 20 per platform per day for visualization)
+              const platTodayPieces = todayProduction.filter(e => (e.platform || 'Shopify / Website') === plat).reduce((sum, e) => sum + Number(e.totalPieces), 0);
+              const dailyQuota = 20; 
+              const quotaProgress = Math.min(100, (platTodayPieces / dailyQuota) * 100);
 
-                        {isExpanded && (
-                          <div className="w-full pt-4 border-t border-gray-800 mt-2 animate-in slide-in-from-top-2">
-                            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 px-1">Select completed pieces:</div>
-                            <div className="flex flex-col gap-2 w-full mb-6">
-                              {group.subTasks.map(st => (
-                                <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-[#cdfc4c]/10 border-[#cdfc4c]' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
-                                  <div className="flex items-center gap-3">
-                                    <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-[#cdfc4c] bg-[#cdfc4c]' : 'border-gray-600'}`}>
-                                      {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
-                                    </div>
-                                    <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size: {st.size}</span>
+              return (
+                <div key={plat} className="bg-[#111] border border-gray-800 rounded-3xl overflow-hidden shadow-2xl transition-all h-full">
+                  <div 
+                    className="p-5 md:p-6 cursor-pointer hover:bg-gray-800/80 transition-colors flex items-center justify-between"
+                    onClick={() => setExpandedPlatforms(prev => {
+                      const newSet = new Set(prev);
+                      newSet.has(plat) ? newSet.delete(plat) : newSet.add(plat);
+                      return newSet;
+                    })}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="relative w-14 h-14 rounded-2xl bg-purple-900/20 border border-purple-900/50 flex items-center justify-center shrink-0">
+                         {/* Quota Ring overlay */}
+                         <svg className="absolute inset-0 w-full h-full -rotate-90 transform" viewBox="0 0 100 100">
+                           <circle cx="50" cy="50" r="46" fill="transparent" stroke="#1f2937" strokeWidth="6" />
+                           <circle cx="50" cy="50" r="46" fill="transparent" stroke={quotaProgress >= 100 ? "#22c55e" : "#cdfc4c"} strokeWidth="6" strokeDasharray="289" strokeDashoffset={289 - (289 * quotaProgress) / 100} className="transition-all duration-1000 ease-out"/>
+                         </svg>
+                         <ShoppingBag size={20} className={quotaProgress >= 100 ? "text-green-500" : "text-purple-400"} />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-white leading-tight">{plat}</h3>
+                        <div className="text-xs text-gray-400 mt-1 font-bold tracking-widest uppercase"><span className="text-white">{platformGroups.length}</span> Styles • <span className="text-rose-400">{totalPiecesNeeded}</span> Queue</div>
+                      </div>
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-black border border-gray-800 flex items-center justify-center text-gray-400 shrink-0">
+                      <ChevronDown size={20} className={`transition-transform duration-300 ${isPlatExpanded ? 'rotate-180 text-[#cdfc4c]' : ''}`} />
+                    </div>
+                  </div>
+
+                  {isPlatExpanded && (
+                    <div className="p-4 pt-0 border-t border-gray-800/50 bg-[#0a0a0a]/50 h-full">
+                      <div className="space-y-4 mt-4">
+                        {platformGroups.map(group => {
+                          const productInfo = products.find(p => p.name === group.product);
+                          const isExpanded = expandedTaskGroup === group.id;
+                          const urgencyClass = getUrgencyStyles(group.oldestTask);
+                          
+                          return (
+                            <div key={group.id} className={`border rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all ${urgencyClass}`}>
+                              
+                              <div className="flex items-center w-full gap-4 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
+                                {productInfo?.image ? <img src={productInfo.image} className="w-14 h-14 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-14 h-14 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
+                                <div className="flex-1">
+                                  <div className="text-[9px] text-gray-400 font-bold uppercase mb-1 flex items-center gap-1">
+                                     {group.status === 'rejected' ? <span className="text-rose-500 bg-rose-950/40 px-1 rounded">REJECTED FIX</span> : <span className="text-purple-400"><Clock size={10} className="inline mr-0.5"/> QUEUE</span>} 
                                   </div>
-                                  <div className="flex items-center gap-4">
-                                    <span className={`font-bold text-sm ${selectedSubTaskIds.has(st.subId) ? 'text-[#cdfc4c]' : 'text-gray-500'}`}>₹{st.pieceRate}</span>
-                                    {role === 'admin' && (
-                                      cancellingSubId === st.subId ? (
-                                        <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
-                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
-                                          <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                          <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                  <h3 className="text-base font-bold text-white leading-tight">{group.product}</h3>
+                                  <div className="text-xs text-gray-500 mt-1 font-bold">{group.subTasks.length} pcs</div>
+                                </div>
+                                <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center text-gray-400 shrink-0 border border-gray-800">
+                                   <ChevronDown size={16} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180 text-white' : ''}`} />
+                                </div>
+                              </div>
+
+                              {isExpanded && (
+                                <div className="w-full pt-4 border-t border-gray-800/50 mt-2 animate-in slide-in-from-top-2">
+                                  <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 px-1">Select completed pieces:</div>
+                                  <div className="flex flex-col gap-2 w-full mb-6">
+                                    {group.subTasks.map(st => (
+                                      <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-[#cdfc4c]/10 border-[#cdfc4c]' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
+                                        <div className="flex items-center gap-3">
+                                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-[#cdfc4c] bg-[#cdfc4c]' : 'border-gray-600'}`}>
+                                            {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
+                                          </div>
+                                          <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
+                                          {st.assignee && st.assignee !== 'Any' && <span className="text-[9px] bg-purple-900/40 border border-purple-500 text-purple-300 px-1.5 py-0.5 rounded flex items-center gap-1"><UserCheck size={10}/> {st.assignee}</span>}
                                         </div>
-                                      ) : (
-                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                          <select value={st.platform || 'Shopify / Website'} onChange={async (e) => {
-                                             if(!useLocalMode) {
-                                                const newPlat = e.target.value;
-                                                const originalTask = tasks.find(t => t.id === st.id);
-                                                if(originalTask) {
-                                                   if (Number(originalTask.quantity) <= 1) {
-                                                      await updateDoc(doc(db, 'priority_tasks', originalTask.id), { platform: newPlat });
-                                                   } else {
-                                                      await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
-                                                      await addDoc(collection(db, 'priority_tasks'), { ...originalTask, quantity: 1, platform: newPlat });
+                                        <div className="flex items-center gap-3">
+                                          {role === 'admin' && (
+                                            cancellingSubId === st.subId ? (
+                                              <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
+                                                <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                                <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                                <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                              </div>
+                                            ) : (
+                                              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                                <select value={st.platform || 'Shopify / Website'} onChange={async (e) => {
+                                                   if(!useLocalMode) {
+                                                      const newPlat = e.target.value;
+                                                      const originalTask = tasks.find(t => t.id === st.id);
+                                                      if(originalTask) {
+                                                         if (Number(originalTask.quantity) <= 1) {
+                                                            await updateDoc(doc(db, 'priority_tasks', originalTask.id), { platform: newPlat });
+                                                         } else {
+                                                            await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
+                                                            await addDoc(collection(db, 'priority_tasks'), { ...originalTask, quantity: 1, platform: newPlat });
+                                                         }
+                                                         showToast("Platform updated!");
+                                                      }
                                                    }
-                                                   showToast("Platform updated!");
-                                                }
-                                             }
-                                          }} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden md:block">
-                                            <option value="Shopify / Website">Shopify</option>
-                                            <option value="Amazon">Amazon</option>
-                                            <option value="Myntra">Myntra</option>
-                                          </select>
-                                          <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-gray-900 rounded-lg hover:bg-rose-900/30" title="Cancel this piece">
-                                            <Trash2 size={16} />
-                                          </button>
+                                                }} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
+                                                  <option value="Shopify / Website">Shopify</option>
+                                                  <option value="Amazon">Amazon</option>
+                                                  <option value="Myntra">Myntra</option>
+                                                </select>
+                                                <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Cancel this piece">
+                                                  <Trash2 size={16} />
+                                                </button>
+                                              </div>
+                                            )
+                                          )}
                                         </div>
-                                      )
-                                    )}
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {renderPhotoUploader()}
+
+                                  <div className="mt-6">
+                                     {(() => {
+                                        const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
+                                        const hasSelection = selectedSubTasks.length > 0;
+                                        const canSubmit = hasSelection && imagePreview;
+                                        return (
+                                          <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteTaskSelection(group)} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10">
+                                            {isUploading ? 'Uploading Securely...' : (!hasSelection ? 'Select Sizes Above' : (!imagePreview ? 'Add QC Photo to Submit' : 'Submit for QC Review'))}
+                                          </button>
+                                        );
+                                     })()}
                                   </div>
                                 </div>
-                              ))}
+                              )}
                             </div>
-
-                            {renderPhotoUploader()}
-
-                            <div className="mt-6">
-                               {(() => {
-                                  const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
-                                  const hasSelection = selectedSubTasks.length > 0;
-                                  const canSubmit = hasSelection && imagePreview;
-                                  return (
-                                    <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteTaskSelection(group)} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10">
-                                      {isUploading ? 'Uploading Securely...' : (!hasSelection ? 'Select Sizes Above' : (!imagePreview ? 'Add QC Photo to Submit' : 'Submit for QC Review'))}
-                                    </button>
-                                  );
-                               })()}
-                            </div>
-                          </div>
-                        )}
-
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
+      </div>
+    );
+  };
+
+  const renderAddPay = () => {
+    // Smart Payout Calculation
+    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
+    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
+    const periodAlreadyPaid = entries.filter(e => e.type === 'payment' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd).reduce((sum, e) => sum + Number(e.amount), 0);
+    
+    // We auto-suggest the total earned in that period (they can still edit it)
+    const suggestedPay = Math.max(0, periodEarned);
+
+    return (
+      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
+        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
+          <form onSubmit={handlePaySubmit} className="space-y-6">
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
+                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
+                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
+                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
+              </div>
+            </div>
+
+            {/* NEW: Smart Date Range Selection for Payouts */}
+            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
+               <div className="flex items-center gap-2 mb-4">
+                 <CalendarRange size={18} className="text-sky-400" />
+                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
+               </div>
+               
+               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
+                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
+                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+               </div>
+
+               {payForm.tailor ? (
+                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div>
+                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
+                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
+                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
+                    </div>
+                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
+                       Auto-Fill ₹{periodEarned}
+                    </button>
+                 </div>
+               ) : (
+                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
+               )}
+            </div>
+
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
+            
+            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
+          </form>
+        </div>
       </div>
     );
   };
@@ -1250,31 +1395,6 @@ export default function App() {
             </table>
           )}
         </div>
-      </div>
-    </div>
-  );
-
-  const renderAddPay = () => (
-    <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Record Payout'}</h2><p className="text-gray-400 mt-2">Log cash payments and advances to tailors.</p></div>
-      <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
-        <form onSubmit={handlePaySubmit} className="space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor</label>
-              <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none">
-                <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Date</label>
-              <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
-            </div>
-          </div>
-          <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Amount Paid</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-gray-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-gray-800 rounded-xl text-2xl font-bold focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
-          <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
-          <button type="submit" className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm Payment'}</button>
-        </form>
       </div>
     </div>
   );
