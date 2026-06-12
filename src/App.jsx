@@ -80,7 +80,7 @@ export default function App() {
 
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [lightboxImage, setLightboxImage] = useState(null);
+  const [lightboxData, setLightboxData] = useState(null);
 
   // WebRTC Camera States
   const videoRef = useRef(null);
@@ -228,7 +228,7 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const MAX_WIDTH = 600;
+      const MAX_WIDTH = 1200; // INCREASED FOR HIGH RES
       const scaleSize = MAX_WIDTH / video.videoWidth;
       const compressedCanvas = document.createElement('canvas');
       compressedCanvas.width = MAX_WIDTH;
@@ -236,7 +236,7 @@ export default function App() {
       const compCtx = compressedCanvas.getContext('2d');
       compCtx.drawImage(canvas, 0, 0, compressedCanvas.width, compressedCanvas.height);
       
-      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.6);
+      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85); // INCREASED QUALITY
       setImagePreview(base64);
       setImageFile('WEBCAM'); 
       stopCamera();
@@ -281,13 +281,13 @@ export default function App() {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 500;
+          const MAX_WIDTH = 1200; // INCREASED FOR HIGH RES
           const scaleSize = MAX_WIDTH / img.width;
           canvas.width = MAX_WIDTH;
           canvas.height = img.height * scaleSize;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.5));
+          resolve(canvas.toDataURL('image/jpeg', 0.85)); // INCREASED QUALITY
         };
       };
     });
@@ -1295,7 +1295,7 @@ export default function App() {
                       </td>
                       <td className="px-6 py-4 text-center">
                          {entry.imageUrl ? (
-                           <button onClick={() => setLightboxImage(entry.imageUrl)} className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 px-3 py-1.5 rounded-full hover:bg-blue-400 hover:text-white transition-colors border border-blue-900/50"><Camera size={12}/> View</button>
+                           <button onClick={() => setLightboxData({ url: entry.imageUrl, timestamp: entry.timestamp, tailor: entry.tailor, product: entry.product })} className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 px-3 py-1.5 rounded-full hover:bg-blue-400 hover:text-white transition-colors border border-blue-900/50"><Camera size={12}/> View</button>
                          ) : <span className="text-gray-700 font-bold text-xs">-</span>}
                       </td>
                       <td className="px-6 py-4 text-right font-bold text-white">{entry.type === 'production' ? <span className={entry.qcStatus === 'rejected' ? 'line-through text-gray-600' : 'text-[#cdfc4c]'}>₹{entry.amount.toLocaleString()}</span> : '-'}</td>
@@ -1636,13 +1636,20 @@ export default function App() {
     <div className="min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden pb-28 md:pb-28">
       
       {/* GLOBAL LIGHTBOX VIEWER */}
-      {lightboxImage && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setLightboxImage(null)}>
-          <div className="relative max-w-4xl max-h-[90vh] w-full">
-            <button className="absolute -top-12 right-0 text-white hover:text-rose-500 transition-colors bg-black/50 p-2 rounded-full" onClick={() => setLightboxImage(null)}>
+      {lightboxData && (
+        <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setLightboxData(null)}>
+          <div className="relative max-w-5xl max-h-[90vh] w-full flex flex-col items-center">
+            <button className="absolute -top-12 right-0 text-white hover:text-rose-500 transition-colors bg-black/50 p-2 rounded-full z-50" onClick={() => setLightboxData(null)}>
                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
-            <img src={lightboxImage} className="w-full h-full object-contain rounded-xl border border-gray-800 shadow-2xl" onClick={(e) => e.stopPropagation()}/>
+            <img src={lightboxData.url} className="w-full h-full max-h-[80vh] object-contain rounded-xl shadow-2xl" onClick={(e) => e.stopPropagation()}/>
+            <div className="mt-4 bg-[#111] border border-gray-800 rounded-xl p-4 text-center w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+               <div className="text-white font-bold text-lg">{lightboxData.product}</div>
+               <div className="text-gray-400 text-sm mt-1">Stitched by <span className="text-[#cdfc4c] font-bold">{lightboxData.tailor}</span></div>
+               <div className="text-gray-500 text-xs mt-2 flex items-center justify-center gap-1.5">
+                  <Clock size={12}/> {new Date(lightboxData.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+               </div>
+            </div>
           </div>
         </div>
       )}
