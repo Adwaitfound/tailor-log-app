@@ -71,7 +71,7 @@ export default function App() {
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
 
   // Form States (Platform added)
-  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any' });
+  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' });
 
   const [prodForm, setProdForm] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -549,7 +549,7 @@ export default function App() {
         await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'rejected', rejectedAt: new Date().toISOString() });
         await addDoc(collection(db, 'priority_tasks'), {
           product: entry.product, size: mainSize, quantity: entry.totalPieces, pieceRate: entry.pieceRate, platform: entry.platform || 'Shopify / Website',
-          status: "rejected", note: "QC REJECTED - ALTERATION REQUIRED", assignee: entry.tailor, createdAt: new Date().toISOString()
+          status: "rejected", note: "QC REJECTED - ALTERATION REQUIRED", assignee: entry.tailor, priority: '1', createdAt: new Date().toISOString()
         });
         showToast(`Batch rejected and returned to ${entry.tailor}'s Tasks!`, "error");
       }
@@ -807,6 +807,30 @@ export default function App() {
   );
 
   const renderTasks = () => {
+    const PRIORITY_WEIGHT = { '1': 4, '2': 3, '3': 2, '4': 1, 'Urgent': 4, 'High': 3, 'Normal': 2, 'Low': 1 };
+    
+    const getNormalizedPriority = (p) => {
+        if (p === '1' || p === 'Urgent') return '1';
+        if (p === '2' || p === 'High') return '2';
+        if (p === '3' || p === 'Normal' || !p) return '3';
+        if (p === '4' || p === 'Low') return '4';
+        return '3';
+    };
+
+    const updateTaskField = async (taskId, field, newValue) => {
+        if(useLocalMode) return;
+        const originalTask = tasks.find(t => t.id === taskId);
+        if(originalTask) {
+            if (Number(originalTask.quantity) <= 1) {
+                await updateDoc(doc(db, 'priority_tasks', originalTask.id), { [field]: newValue });
+            } else {
+                await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
+                await addDoc(collection(db, 'priority_tasks'), { ...originalTask, quantity: 1, [field]: newValue });
+            }
+            showToast(`${field.charAt(0).toUpperCase() + field.slice(1)} updated!`);
+        }
+    };
+
     // 1. Group tasks by Platform first, then by Product (Outfit)
     const tasksByPlatform = tasks.reduce((acc, t) => {
       // If Taylor is looking, hide tasks assigned to someone else
@@ -815,6 +839,8 @@ export default function App() {
       }
 
       const plat = t.platform || 'Shopify / Website';
+      const taskPriority = getNormalizedPriority(t.priority);
+      
       if (!acc[plat]) acc[plat] = {};
       
       if (!acc[plat][t.product]) {
@@ -824,8 +850,17 @@ export default function App() {
           platform: plat, 
           subTasks: [], 
           status: t.status,
-          oldestTask: t.createdAt
+          oldestTask: t.createdAt,
+          highestPriority: taskPriority,
+          highestPriorityWeight: PRIORITY_WEIGHT[taskPriority] || 2
         };
+      } else {
+        // If multiple tasks exist for the same outfit, inherit the highest priority
+        const weight = PRIORITY_WEIGHT[taskPriority] || 2;
+        if (weight > acc[plat][t.product].highestPriorityWeight) {
+          acc[plat][t.product].highestPriority = taskPriority;
+          acc[plat][t.product].highestPriorityWeight = weight;
+        }
       }
       
       const qty = Number(t.quantity) || 1;
@@ -837,7 +872,7 @@ export default function App() {
       }
       
       for (let i = 0; i < qty; i++) {
-        acc[plat][t.product].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate });
+        acc[plat][t.product].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority });
       }
       return acc;
     }, {});
@@ -863,7 +898,7 @@ export default function App() {
         {role === 'admin' && (
           <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
             <h3 className="text-white font-bold text-sm mb-4 flex items-center gap-2"><Plus size={16} className="text-rose-500"/> Assign Urgent Task</h3>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-8 gap-3">
               <div className="col-span-2 relative">
                 <div className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-gray-400 cursor-pointer flex items-center justify-between" onClick={() => setIsTaskProductDropdownOpen(!isTaskProductDropdownOpen)}>
                   <span className="truncate">{taskForm.product || "Select Product..."}</span><ChevronDown size={14}/>
@@ -883,12 +918,18 @@ export default function App() {
               <select value={taskForm.assignee} onChange={(e) => setTaskForm({...taskForm, assignee: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none text-purple-400 font-bold">
                 <option value="Any">Assign: Any</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+              <select value={taskForm.priority} onChange={(e) => setTaskForm({...taskForm, priority: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none font-bold">
+                <option value="1">Priority 1 (Highest)</option>
+                <option value="2">Priority 2</option>
+                <option value="3">Priority 3</option>
+                <option value="4">Priority 4</option>
+              </select>
               <div className="relative"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
               <button onClick={() => {
                 if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
-                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, status: 'pending', createdAt: new Date().toISOString() });
-                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any' }); showToast("Task Assigned!");
-              }} className="col-span-2 md:col-span-1 bg-[#cdfc4c] text-black font-black text-sm rounded-lg py-2 hover:bg-[#b5e638]">Add</button>
+                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, priority: taskForm.priority, status: 'pending', createdAt: new Date().toISOString() });
+                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' }); showToast("Task Assigned!");
+              }} className="col-span-2 lg:col-span-1 bg-[#cdfc4c] text-black font-black text-sm rounded-lg py-2 hover:bg-[#b5e638]">Add</button>
             </div>
           </div>
         )}
@@ -900,7 +941,15 @@ export default function App() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
             {sortedPlatforms.map(plat => {
-              const platformGroups = Object.values(tasksByPlatform[plat]).sort((a, b) => a.product.localeCompare(b.product)); // Alphabetical Sort
+              const platformGroups = Object.values(tasksByPlatform[plat]).sort((a, b) => {
+                // Primary Sort: Priority Level (Highest first)
+                if (b.highestPriorityWeight !== a.highestPriorityWeight) {
+                  return b.highestPriorityWeight - a.highestPriorityWeight;
+                }
+                // Secondary Sort: Alphabetical
+                return a.product.localeCompare(b.product);
+              });
+              
               if (platformGroups.length === 0) return null;
 
               const isPlatExpanded = expandedPlatforms.has(plat);
@@ -948,14 +997,26 @@ export default function App() {
                           const isExpanded = expandedTaskGroup === group.id;
                           const urgencyClass = getUrgencyStyles(group.oldestTask);
                           
+                          const priorityStyles = {
+                            '1': 'bg-red-500/20 text-red-500 border-red-500/50',
+                            '2': 'bg-orange-500/20 text-orange-500 border-orange-500/50',
+                            '3': 'bg-blue-500/20 text-blue-400 border-blue-500/50',
+                            '4': 'bg-gray-500/20 text-gray-400 border-gray-500/50'
+                          };
+                          const pBadge = priorityStyles[group.highestPriority] || priorityStyles['3'];
+                          
                           return (
                             <div key={group.id} className={`border rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all ${urgencyClass}`}>
                               
                               <div className="flex items-center w-full gap-4 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
                                 {productInfo?.image ? <img src={productInfo.image} className="w-14 h-14 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-14 h-14 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
                                 <div className="flex-1">
-                                  <div className="text-[9px] text-gray-400 font-bold uppercase mb-1 flex items-center gap-1">
+                                  <div className="text-[9px] text-gray-400 font-bold uppercase mb-1 flex flex-wrap items-center gap-2">
                                      {group.status === 'rejected' ? <span className="text-rose-500 bg-rose-950/40 px-1 rounded">REJECTED FIX</span> : <span className="text-purple-400"><Clock size={10} className="inline mr-0.5"/> QUEUE</span>} 
+                                     <span className={`px-1.5 py-0.5 rounded border ${pBadge} font-black`}>
+                                       {group.highestPriority === '1' && <Flame size={10} className="inline mr-1 mb-0.5"/>}
+                                       P{group.highestPriority}
+                                     </span>
                                   </div>
                                   <h3 className="text-base font-bold text-white leading-tight">{group.product}</h3>
                                   <div className="text-xs text-gray-500 mt-1 font-bold">{group.subTasks.length} pcs</div>
@@ -988,24 +1049,16 @@ export default function App() {
                                               </div>
                                             ) : (
                                               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                                <select value={st.platform || 'Shopify / Website'} onChange={async (e) => {
-                                                   if(!useLocalMode) {
-                                                      const newPlat = e.target.value;
-                                                      const originalTask = tasks.find(t => t.id === st.id);
-                                                      if(originalTask) {
-                                                         if (Number(originalTask.quantity) <= 1) {
-                                                            await updateDoc(doc(db, 'priority_tasks', originalTask.id), { platform: newPlat });
-                                                         } else {
-                                                            await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
-                                                            await addDoc(collection(db, 'priority_tasks'), { ...originalTask, quantity: 1, platform: newPlat });
-                                                         }
-                                                         showToast("Platform updated!");
-                                                      }
-                                                   }
-                                                }} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
+                                                <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
                                                   <option value="Shopify / Website">Shopify</option>
                                                   <option value="Amazon">Amazon</option>
                                                   <option value="Myntra">Myntra</option>
+                                                </select>
+                                                <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
+                                                  <option value="1">P1</option>
+                                                  <option value="2">P2</option>
+                                                  <option value="3">P3</option>
+                                                  <option value="4">P4</option>
                                                 </select>
                                                 <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Cancel this piece">
                                                   <Trash2 size={16} />
