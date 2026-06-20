@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, PlayCircle
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -42,8 +42,7 @@ export default function App() {
   const [role, setRole] = useState(null); 
   const [loginStep, setLoginStep] = useState('select'); 
   const [pinInput, setPinInput] = useState('');
-  const [loginError, setLoginError] = useState('');
-
+  
   // --- CORE STATE ---
   const [entries, setEntries] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -62,7 +61,6 @@ export default function App() {
   const [deletingId, setDeletingId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null); 
   const [cancellingSubId, setCancellingSubId] = useState(null);
-  const [clearingGroupId, setClearingGroupId] = useState(null);
   const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
   const [isTaskProductDropdownOpen, setIsTaskProductDropdownOpen] = useState(false); 
   const [productSearch, setProductSearch] = useState('');
@@ -88,7 +86,6 @@ export default function App() {
   const photoCanvasRef = useRef(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
-  // Pay Cycles & Pay Form setup
   const getPayCycleDates = (offsetWeeks = 0) => {
     const today = new Date();
     const dayOfWeek = today.getDay(); 
@@ -124,7 +121,15 @@ export default function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
-  // --- INITIALIZATION ---
+  // --- THE GHOST-TASK BLACKLIST ENGINE ---
+  const getBlacklist = () => JSON.parse(localStorage.getItem('poshakh_blacklist') || '[]');
+  const addToBlacklist = (ids) => {
+      const current = getBlacklist();
+      const newBlacklist = [...new Set([...current, ...ids])];
+      localStorage.setItem('poshakh_blacklist', JSON.stringify(newBlacklist));
+      return newBlacklist;
+  };
+
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
@@ -152,10 +157,8 @@ export default function App() {
     const loadLocalData = () => {
       const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
       const localConfig = JSON.parse(localStorage.getItem('poshakh_config') || 'null');
-      const localTasks = JSON.parse(localStorage.getItem('poshakh_tasks') || '[]');
       
       setEntries(localLedger);
-      setTasks(localTasks);
       if (localConfig) {
         setTailors(localConfig.tailors || []);
         setProducts(localConfig.products || []);
@@ -169,20 +172,16 @@ export default function App() {
       setLoading(false);
     };
 
-    const initDB = async () => {
+    const fetchFirebaseDirectly = async () => {
       try {
         await signInAnonymously(auth);
-      } catch (err) { console.error("Firebase Auth Error:", err); }
 
-      try {
         unsubscribeLedger = onSnapshot(collection(db, 'ledger'), (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setEntries(data);
-          setLoading(false); 
-        }, (err) => { 
-          setUseLocalMode(true); loadLocalData(); 
-        });
+          setLoading(false);
+        }, (err) => { setUseLocalMode(true); loadLocalData(); });
 
         unsubscribeConfig = onSnapshot(doc(db, 'config', 'setup'), (docSnap) => {
           if (docSnap.exists()) {
@@ -195,34 +194,38 @@ export default function App() {
             });
             setProdForm(prev => ({ ...prev, tailor: data.tailors?.[0] || '', product: data.products?.[0]?.name || '' }));
           }
-        }, () => {});
+        });
 
         unsubscribeTasks = onSnapshot(collection(db, 'priority_tasks'), (snapshot) => {
-          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          // Included 'in_progress' to support Live Kitchen view
-          const activeTasks = data.filter(t => t.status === 'pending' || t.status === 'rejected' || t.status === 'in_progress').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+          const blacklist = getBlacklist();
+          // THE INTERCEPTOR: Filters out any ID that is on your browser's local blacklist
+          const data = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(t => !blacklist.includes(t.id));
+          
+          const activeTasks = data.filter(t => 
+            (t.status === 'pending' || t.status === 'rejected' || t.status === 'in_progress') && 
+            Number(t.quantity) > 0
+          ).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
           setTasks(activeTasks);
-        }, () => {});
+        });
 
       } catch (err) { setUseLocalMode(true); loadLocalData(); }
     };
 
-    initDB();
-
     const timeoutId = setTimeout(() => {
-      setLoading(prev => {
-        if (prev) { setUseLocalMode(true); loadLocalData(); return false; }
-        return prev;
-      });
+        if (loading) { setUseLocalMode(true); loadLocalData(); }
     }, 5000);
 
+    fetchFirebaseDirectly();
+
     return () => {
+      clearTimeout(timeoutId);
       if (unsubscribeLedger) unsubscribeLedger();
       if (unsubscribeConfig) unsubscribeConfig();
       if (unsubscribeTasks) unsubscribeTasks();
-      clearTimeout(timeoutId);
     };
-  }, []);
+  }, [loading]);
 
   const startCamera = async () => {
     setIsCameraOpen(true);
@@ -254,7 +257,7 @@ export default function App() {
       const compCtx = compressedCanvas.getContext('2d');
       compCtx.drawImage(canvas, 0, 0, compressedCanvas.width, compressedCanvas.height);
       
-      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85); 
+      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85);
       setImagePreview(base64);
       setImageFile('WEBCAM'); 
       stopCamera();
@@ -290,13 +293,6 @@ export default function App() {
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
   const syncLocal = (key, data) => localStorage.setItem(key, JSON.stringify(data));
 
-  const findProductImage = (productName) => {
-    if (!productName || !products) return null;
-    const normalizedSearch = productName.trim().toLowerCase();
-    const found = products.find(p => (p.name || '').trim().toLowerCase() === normalizedSearch);
-    return found ? found.image : null;
-  };
-
   const compressImageToBase64 = (file) => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -316,6 +312,14 @@ export default function App() {
         };
       };
     });
+  };
+
+  // Smart fuzzy matching for images (ignores case and ALL trailing spaces)
+  const findProductImage = (productName) => {
+    if (!productName || !products) return null;
+    const cleanSearch = productName.trim().toLowerCase().replace(/\s+/g, ' ');
+    const found = products.find(p => p.name.trim().toLowerCase().replace(/\s+/g, ' ') === cleanSearch);
+    return found ? found.image : null;
   };
 
   const saveConfig = async () => {
@@ -429,11 +433,15 @@ export default function App() {
 
   const handleProdSubmit = async (e) => {
     e.preventDefault();
-    if (!prodForm.tailor || !prodForm.product) return showToast("Select a tailor and product.", "error");
+    
+    // EXPLICIT ERROR MESSAGES (Button is no longer disabled, it tells you exactly what is wrong)
+    if (!prodForm.tailor) return showToast("Missing: Please select a Tailor.", "error");
+    if (!prodForm.product) return showToast("Missing: Please select a Product.", "error");
 
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
-    if (totalPieces === 0) return showToast("Enter at least one piece.", "error");
-    if (!imagePreview) return showToast("Please attach a QC photo!", "error");
+    if (totalPieces === 0) return showToast("Missing: Enter at least 1 piece in the sizes section.", "error");
+    
+    if (!imagePreview) return showToast("Missing: Please attach a QC Photo!", "error");
 
     setIsUploading(true);
 
@@ -468,285 +476,15 @@ export default function App() {
         else await addDoc(collection(db, 'ledger'), entryData);
       }
       
-      showToast(editingEntryId ? "Log Updated" : "Sent to Admin for QC Review!");
+      showToast(editingEntryId ? "Log Updated Successfully!" : "Sent to Admin for QC Review!");
       setEditingEntryId(null); setImageFile(null); setImagePreview(null);
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
       if (role === 'admin') setActiveTab('ledger');
-    } catch (err) { showToast("Failed to save.", "error"); } finally { setIsUploading(false); }
-  };
-
-  const toggleSubTaskSelection = (subId) => {
-    setSelectedSubTaskIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(subId)) newSet.delete(subId);
-      else newSet.add(subId);
-      return newSet;
-    });
-  };
-
-  // NEW: Claim task logic for Live Kitchen
-  const handleStartTaskSelection = async (group) => {
-    const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
-    if (selectedSubTasks.length === 0) return showToast("Select at least one piece below!", "error");
-    if (!prodForm.tailor) return showToast("Please select your name on the 'Add Batch' tab first!", "error");
-
-    const taskUpdates = {}; 
-    selectedSubTasks.forEach(st => { taskUpdates[st.id] = (taskUpdates[st.id] || 0) + 1; });
-
-    setIsUploading(true);
-    try {
-      if (!useLocalMode) {
-        for (const [taskId, claimedQty] of Object.entries(taskUpdates)) {
-           const originalTask = tasks.find(t => t.id === taskId);
-           if (!originalTask) continue;
-           const remainingQty = (Number(originalTask.quantity) || 1) - claimedQty;
-
-           if (remainingQty <= 0) {
-             await updateDoc(doc(db, 'priority_tasks', taskId), {
-               status: 'in_progress', startedBy: prodForm.tailor, startedAt: new Date().toISOString()
-             });
-           } else {
-             await updateDoc(doc(db, 'priority_tasks', taskId), { quantity: remainingQty });
-             await addDoc(collection(db, 'priority_tasks'), {
-               ...originalTask, quantity: claimedQty, status: 'in_progress', startedBy: prodForm.tailor, startedAt: new Date().toISOString()
-             });
-           }
-        }
-      }
-      showToast(`Moved to Live Stitching Queue!`);
-      setSelectedSubTaskIds(new Set());
-      if (selectedSubTasks.length === group.subTasks.length) setExpandedTaskGroup(null);
-    } catch(err) { showToast("Error starting task", "error"); } finally { setIsUploading(false); }
-  };
-
-  const handleCompleteTaskSelection = async (group) => {
-    const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
-    if (selectedSubTasks.length === 0) return showToast("Select at least one piece below!", "error");
-    if (!prodForm.tailor) return showToast("Please select your name (Tailor) on the 'Add Batch' tab first!", "error");
-    if (!imagePreview) return showToast("Please attach a QC photo to submit!", "error");
-    
-    const taskUpdates = {}; 
-    selectedSubTasks.forEach(st => { taskUpdates[st.id] = (taskUpdates[st.id] || 0) + 1; });
-
-    const pieceRate = selectedSubTasks[0].pieceRate || 250;
-    const totalQuantity = selectedSubTasks.length;
-    const sizesStitched = selectedSubTasks.reduce((acc, st) => {
-       const s = st.size || 'M';
-       acc[s] = (acc[s] || 0) + 1;
-       return acc;
-    }, {});
-    const totalAmount = totalQuantity * pieceRate;
-
-    setIsUploading(true);
-
-    try {
-      let finalImageData = null;
-      if (imageFile === 'WEBCAM') finalImageData = imagePreview;
-      else if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
-
-      if (!useLocalMode) {
-        for (const [taskId, completedQty] of Object.entries(taskUpdates)) {
-           const originalTask = tasks.find(t => t.id === taskId);
-           if (!originalTask) continue;
-           const remainingQty = (Number(originalTask.quantity) || 1) - completedQty;
-
-           if (remainingQty <= 0) {
-             await updateDoc(doc(db, 'priority_tasks', taskId), {
-               status: 'pending_review', completedBy: prodForm.tailor, completedAt: new Date().toISOString()
-             });
-           } else {
-             await updateDoc(doc(db, 'priority_tasks', taskId), { quantity: remainingQty });
-             await addDoc(collection(db, 'priority_tasks'), {
-               ...originalTask, quantity: completedQty, status: 'pending_review', completedBy: prodForm.tailor, completedAt: new Date().toISOString()
-             });
-           }
-        }
-      }
-
-      const entryData = {
-        type: 'production', date: new Date().toISOString().split('T')[0], tailor: prodForm.tailor,
-        product: group.product, platform: group.platform || 'Shopify / Website', sizes: sizesStitched, totalPieces: totalQuantity, pieceRate: pieceRate, amount: totalAmount,
-        imageUrl: finalImageData, qcStatus: 'pending', timestamp: new Date().toISOString(),
-        note: group.status === 'rejected' ? 'Alteration Fixed' : 'Priority Queue'
-      };
-
-      if (!useLocalMode) await addDoc(collection(db, 'ledger'), entryData);
-      
-      showToast(`Sent to Admin for QC Review!`);
-      setImageFile(null); setImagePreview(null); setSelectedSubTaskIds(new Set());
-      if (selectedSubTasks.length === group.subTasks.length) setExpandedTaskGroup(null);
-    } catch(err) { showToast("Error completing task", "error"); } finally { setIsUploading(false); }
-  };
-
-  // NEW: Submission engine from the Live Kitchen Tab
-  const handleCompleteLiveSelection = async (tailorName, liveSubTasks) => {
-    const selectedSubTasks = liveSubTasks.filter(st => selectedSubTaskIds.has(st.subId));
-    if (selectedSubTasks.length === 0) return showToast("Select items to complete!", "error");
-    if (!imagePreview) return showToast("Please attach a QC photo to submit!", "error");
-
-    const taskUpdates = {}; 
-    selectedSubTasks.forEach(st => { taskUpdates[st.id] = (taskUpdates[st.id] || 0) + 1; });
-    const pieceRate = selectedSubTasks[0].pieceRate || 250;
-
-    // Group items for Ledger
-    const productsMap = {};
-    selectedSubTasks.forEach(st => {
-       if (!productsMap[st.product]) productsMap[st.product] = { sizes: {}, count: 0, platform: st.platform };
-       const s = st.size || 'M';
-       productsMap[st.product].sizes[s] = (productsMap[st.product].sizes[s] || 0) + 1;
-       productsMap[st.product].count += 1;
-    });
-
-    setIsUploading(true);
-    try {
-      let finalImageData = null;
-      if (imageFile === 'WEBCAM') finalImageData = imagePreview;
-      else if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
-
-      if (!useLocalMode) {
-        for (const [taskId, completedQty] of Object.entries(taskUpdates)) {
-           const originalTask = tasks.find(t => t.id === taskId);
-           if (!originalTask) continue;
-           const remainingQty = (Number(originalTask.quantity) || 1) - completedQty;
-
-           if (remainingQty <= 0) {
-             await updateDoc(doc(db, 'priority_tasks', taskId), {
-               status: 'pending_review', completedAt: new Date().toISOString()
-             });
-           } else {
-             await updateDoc(doc(db, 'priority_tasks', taskId), { quantity: remainingQty });
-             await addDoc(collection(db, 'priority_tasks'), {
-               ...originalTask, quantity: completedQty, status: 'pending_review', completedAt: new Date().toISOString()
-             });
-           }
-        }
-      }
-
-      // Record actual ledger logs
-      for (const [prodName, pData] of Object.entries(productsMap)) {
-         const entryData = {
-           type: 'production', date: new Date().toISOString().split('T')[0], tailor: tailorName,
-           product: prodName, platform: pData.platform || 'Shopify / Website', sizes: pData.sizes, totalPieces: pData.count, pieceRate: pieceRate, amount: pData.count * pieceRate,
-           imageUrl: finalImageData, qcStatus: 'pending', timestamp: new Date().toISOString(),
-           note: 'Completed from Live Queue'
-         };
-         if (!useLocalMode) await addDoc(collection(db, 'ledger'), entryData);
-      }
-
-      showToast(`Finished and Sent for QC Review!`);
-      setImageFile(null); setImagePreview(null); setSelectedSubTaskIds(new Set());
-    } catch(err) { showToast("Error submitting", "error"); } finally { setIsUploading(false); }
-  };
-
-  const handleDropTask = async (taskId) => {
-     try {
-        if(!useLocalMode) {
-           await updateDoc(doc(db, 'priority_tasks', taskId), { status: 'pending', startedBy: null, startedAt: null });
-        }
-        showToast("Returned item to main Queue");
-     } catch (e) { showToast("Error dropping task", "error"); }
-  };
-
-  const executeCancelSubTask = async (subTask) => {
-    try {
-      const originalTask = tasks.find(t => t.id === subTask.id);
-      
-      let newTasks;
-      if (!originalTask || Number(originalTask.quantity) <= 1 || isNaN(Number(originalTask.quantity))) {
-         newTasks = tasks.filter(t => t.id !== subTask.id);
-      } else {
-         newTasks = tasks.map(t => t.id === subTask.id ? { ...t, quantity: Number(originalTask.quantity) - 1 } : t);
-      }
-      setTasks(newTasks);
-      
-      if (useLocalMode) {
-         syncLocal('poshakh_tasks', newTasks);
-      } else {
-        if (!originalTask || Number(originalTask.quantity) <= 1 || isNaN(Number(originalTask.quantity))) {
-            await deleteDoc(doc(db, 'priority_tasks', subTask.id));
-        } else {
-            await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
-        }
-      }
-      showToast("Item forcefully removed.");
-      setCancellingSubId(null);
-    } catch (err) { showToast("Failed to cancel task.", "error"); }
-  };
-
-  const confirmRejectBatch = async (entry) => {
-    setRejectingId(null);
-    let mainSize = 'M';
-    if(entry.sizes) {
-       const activeSizes = Object.entries(entry.sizes).filter(([_, qty]) => Number(qty) > 0);
-       if(activeSizes.length > 0) mainSize = activeSizes[0][0];
-    }
-    try {
-      if (!useLocalMode) {
-        await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'rejected', rejectedAt: new Date().toISOString() });
-        await addDoc(collection(db, 'priority_tasks'), {
-          product: entry.product, size: mainSize, quantity: entry.totalPieces, pieceRate: entry.pieceRate, platform: entry.platform || 'Shopify / Website',
-          status: "rejected", note: "QC REJECTED - ALTERATION REQUIRED", assignee: entry.tailor, priority: '1', createdAt: new Date().toISOString()
-        });
-        showToast(`Batch rejected and returned to ${entry.tailor}'s Tasks!`, "error");
-      }
-    } catch (err) { showToast("Failed to reject.", "error"); }
-  };
-  
-  const handleApproveBatch = async (entry) => {
-    try {
-      if (!useLocalMode) {
-        await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'approved', approvedAt: new Date().toISOString() });
-        showToast(`Batch approved!`);
-      }
-    } catch (err) { showToast("Failed to approve.", "error"); }
-  };
-
-  const handlePaySubmit = async (e) => {
-    e.preventDefault();
-    const payAmount = parseFloat(payForm.amount);
-    if (!payForm.tailor || !payAmount || payAmount <= 0) return showToast("Enter valid amount.", "error");
-
-    let smartNote = payForm.note ? `${payForm.note} ` : '';
-    smartNote += `(Settled: ${payForm.periodStart} to ${payForm.periodEnd})`;
-
-    const entryData = { type: 'payment', date: payForm.date, tailor: payForm.tailor, amount: payAmount, note: smartNote.trim(), timestamp: new Date().toISOString() };
-    try {
-      if (useLocalMode) {
-        let newEntries = [...entries];
-        if (editingEntryId) newEntries = newEntries.map(e => e.id === editingEntryId ? { ...entryData, id: editingEntryId } : e);
-        else newEntries = [{ ...entryData, id: crypto.randomUUID() }, ...newEntries];
-        setEntries(newEntries); syncLocal('poshakh_ledger', newEntries);
-      } else {
-        if (editingEntryId) await updateDoc(doc(db, 'ledger', editingEntryId), entryData);
-        else await addDoc(collection(db, 'ledger'), entryData);
-      }
-      setEditingEntryId(null); setPayForm(prev => ({ ...prev, amount: '', note: '' })); setActiveTab('ledger');
-      showToast("Payment Logged Successfully!");
-    } catch (err) { showToast("Failed to save.", "error"); }
-  };
-
-  const deleteEntry = async (id) => {
-    try {
-      if (useLocalMode) {
-        const newEntries = entries.filter(e => e.id !== id);
-        setEntries(newEntries); syncLocal('poshakh_ledger', newEntries); showToast("Deleted locally.");
-      } else {
-        await deleteDoc(doc(db, 'ledger', id)); showToast("Cloud record deleted.");
-      }
-      setDeletingId(null);
-    } catch (err) { showToast("Delete failed.", "error"); }
-  };
-
-  const startEdit = (entry) => {
-    setEditingEntryId(entry.id);
-    if (entry.type === 'production') {
-      setProdForm({ date: entry.date, tailor: entry.tailor, product: entry.product, sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: entry.pieceRate || 250, platform: entry.platform || 'Shopify / Website' });
-      setImagePreview(entry.imageUrl || null);
-      setImageFile(null);
-      setActiveTab('add-batch');
-    } else {
-      setPayForm({ date: entry.date, tailor: entry.tailor, amount: entry.amount, note: entry.note || '', periodStart: currentCycle.start, periodEnd: currentCycle.end });
-      setActiveTab('pay');
+    } catch (err) { 
+      console.error("Firebase Add Batch Error:", err);
+      showToast(`Database Error: ${err.message || 'Failed to save batch.'}`, "error"); 
+    } finally { 
+      setIsUploading(false); 
     }
   };
 
@@ -852,6 +590,10 @@ export default function App() {
     return Object.entries(groups).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.value - a.value);
   }, [finalLedgerEntries]);
 
+  const currentSelectedProductImage = useMemo(() => {
+    return findProductImage(prodForm.product);
+  }, [prodForm.product, products]);
+
   const getUrgencyStyles = (createdAt) => {
     if (!createdAt) return 'border-gray-800 bg-[#111]';
     const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
@@ -936,6 +678,141 @@ export default function App() {
     </div>
   );
 
+  const renderLiveQueue = () => {
+    const liveTasks = tasks.filter(t => t.status === 'in_progress');
+    const tasksByTailor = liveTasks.reduce((acc, t) => {
+      const tailor = t.startedBy || 'Unknown';
+      if (!acc[tailor]) acc[tailor] = [];
+      const qty = Number(t.quantity) || 1;
+      for (let i = 0; i < qty; i++) {
+        acc[tailor].push({ ...t, subId: `${t.id}-live-${i}`, quantity: 1 });
+      }
+      return acc;
+    }, {});
+
+    return (
+      <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in">
+        <div className="text-center mb-8">
+          <h2 className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-2"><Activity size={28} className="text-purple-500"/> Live Floor</h2>
+          <p className="text-gray-400 mt-2">See what is currently on the sewing machines.</p>
+        </div>
+
+        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name to interact here!</div>}
+
+        {Object.keys(tasksByTailor).length === 0 ? (
+          <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center">
+            <Scissors size={48} className="mx-auto mb-4 text-gray-700 opacity-50" />
+            <h3 className="text-xl font-bold text-gray-500 mb-1">The workshop is quiet right now.</h3>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {Object.entries(tasksByTailor).map(([tailorName, items]) => {
+              const isMyWork = prodForm.tailor === tailorName || role === 'admin';
+              
+              return (
+                <div key={tailorName} className="bg-[#111] border border-purple-900/50 rounded-3xl overflow-hidden shadow-2xl relative">
+                  <div className="absolute top-0 left-0 w-full h-1.5 bg-purple-500"></div>
+                  
+                  <div className="p-6 border-b border-gray-800 flex items-center justify-between gap-4 bg-[#0a0a0a]">
+                     <div className="flex items-center gap-4">
+                       <div className="w-12 h-12 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
+                          <User size={20}/>
+                       </div>
+                       <div>
+                          <h3 className="text-2xl font-black text-white">{tailorName}</h3>
+                          <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-0.5"><Scissors size={12}/> {items.length} active pieces</div>
+                       </div>
+                     </div>
+                     {isMyWork && items.filter(st => selectedSubTaskIds.has(st.subId)).length > 0 && (
+                       <span className="hidden sm:inline-flex bg-[#cdfc4c] text-black text-[10px] font-black px-3 py-1.5 rounded-lg shadow-lg items-center gap-1.5">
+                         <CheckCircle size={12}/> {items.filter(st => selectedSubTaskIds.has(st.subId)).length} Selected
+                       </span>
+                     )}
+                  </div>
+
+                  <div className="p-6 bg-[#0a0a0a]/50">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                       {items.map(st => {
+                          const entryImage = findProductImage(st.product);
+                          const startTime = new Date(st.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                          const isSelected = selectedSubTaskIds.has(st.subId);
+                          
+                          return (
+                            <div key={st.subId} onClick={() => isMyWork && toggleSubTaskSelection(st.subId)} className={`group flex flex-col rounded-2xl border-2 transition-all overflow-hidden relative ${!isMyWork ? 'border-gray-800 bg-black opacity-60' : (isSelected ? 'border-[#cdfc4c] shadow-[0_0_20px_rgba(205,252,76,0.15)] cursor-pointer translate-y-[-4px]' : 'border-gray-800 hover:border-gray-600 cursor-pointer')}`}>
+                               
+                               <div className="w-full aspect-[3/4] relative bg-black overflow-hidden">
+                                 {entryImage ? (
+                                    <img src={entryImage} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-110" />
+                                 ) : (
+                                    <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-12 h-12" /></div>
+                                 )}
+                                 
+                                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/30 pointer-events-none transition-opacity duration-300"></div>
+
+                                 {isMyWork && (
+                                   <div className="absolute top-3 right-3 z-10">
+                                      <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-xl backdrop-blur-md ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/40 bg-black/40 group-hover:border-white/80'}`}>
+                                         {isSelected && <CheckCircle size={16} className="text-black" />}
+                                      </div>
+                                   </div>
+                                 )}
+
+                                 <div className="absolute bottom-0 left-0 w-full p-3 z-10">
+                                    <div className="flex flex-col">
+                                      <div className="flex items-center gap-1.5 mb-1 opacity-90">
+                                        <Activity size={10} className="text-purple-400"/>
+                                        <span className="text-[9px] text-purple-200 font-bold uppercase tracking-widest">{startTime}</span>
+                                      </div>
+                                      <div className={`font-black text-sm leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
+                                         {st.product}
+                                      </div>
+                                    </div>
+                                 </div>
+                               </div>
+                               
+                               <div className={`p-3 flex items-center justify-between bg-[#111] transition-colors ${isSelected ? 'bg-[#cdfc4c]/10' : ''}`}>
+                                  <div className="flex items-center gap-2">
+                                     <span className={`text-[11px] px-2 py-0.5 rounded font-black uppercase ${isSelected ? 'bg-[#cdfc4c] text-black' : 'bg-gray-800 text-white'}`}>Size {st.size}</span>
+                                  </div>
+                                  
+                                  {isMyWork && (
+                                     <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-7 h-7 rounded-full bg-black border border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all" title="Drop Item">
+                                        <Trash2 size={12} />
+                                     </button>
+                                  )}
+                               </div>
+                            </div>
+                          )
+                       })}
+                    </div>
+
+                    {isMyWork && (
+                       <div className="mt-8 pt-6 border-t border-gray-800">
+                         {renderPhotoUploader()}
+                         
+                         {(() => {
+                            const selectedSubTasks = items.filter(st => selectedSubTaskIds.has(st.subId));
+                            const hasSelection = selectedSubTasks.length > 0;
+                            const canSubmit = hasSelection && imagePreview;
+                            return (
+                              <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteLiveSelection(tailorName, items)} className="w-full py-4 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-lg">
+                                {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!imagePreview ? 'Add QC Photo to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
+                              </button>
+                            );
+                         })()}
+                       </div>
+                    )}
+
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderTasks = () => {
     const PRIORITY_WEIGHT = { '1': 4, '2': 3, '3': 2, '4': 1, 'Urgent': 4, 'High': 3, 'Normal': 2, 'Low': 1 };
     
@@ -961,15 +838,16 @@ export default function App() {
         }
     };
 
-    // Ignore Live Items in the Main Queue
-    const tasksByPlatform = tasks.filter(t => t.status !== 'in_progress').reduce((acc, t) => {
+    const pendingTasks = tasks.filter(t => t.status === 'pending' || t.status === 'rejected');
+
+    const tasksByPlatform = pendingTasks.reduce((acc, t) => {
       if (role === 'staff' && t.assignee && t.assignee !== 'Any' && t.assignee !== prodForm.tailor) {
          return acc;
       }
 
       const plat = t.platform || 'Shopify / Website';
-      const safeProduct = t.product || 'Unnamed Item'; 
       const taskPriority = getNormalizedPriority(t.priority);
+      const safeProduct = t.product || 'Unnamed Item';
       
       if (!acc[plat]) acc[plat] = {};
       
@@ -1000,7 +878,7 @@ export default function App() {
       }
       
       for (let i = 0; i < qty; i++) {
-        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority, assignee: t.assignee });
+        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority });
       }
       return acc;
     }, {});
@@ -1063,7 +941,7 @@ export default function App() {
 
         {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
 
-        {tasks.filter(t => t.status !== 'in_progress').length === 0 ? (
+        {pendingTasks.length === 0 ? (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center"><CheckCircle size={48} className="mx-auto mb-4 text-green-500 opacity-50" /><h3 className="text-xl font-bold text-white mb-1">Queue is Empty!</h3></div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
@@ -1114,7 +992,7 @@ export default function App() {
                     <div className="p-4 pt-0 border-t border-gray-800/50 bg-[#0a0a0a]/50 h-full">
                       <div className="space-y-4 mt-4">
                         {platformGroups.map(group => {
-                          const entryImage = findProductImage(group.product);
+                          const productImage = findProductImage(group.product);
                           const isExpanded = expandedTaskGroup === group.id;
                           const urgencyClass = getUrgencyStyles(group.oldestTask);
                           
@@ -1130,7 +1008,7 @@ export default function App() {
                             <div key={group.id} className={`border rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all ${urgencyClass}`}>
                               
                               <div className="flex items-center w-full gap-4 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
-                                {entryImage ? <img src={entryImage} className="w-14 h-14 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-14 h-14 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
+                                {productImage ? <img src={productImage} className="w-14 h-14 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-14 h-14 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
                                 <div className="flex-1">
                                   <div className="text-[9px] text-gray-400 font-bold uppercase mb-1 flex flex-wrap items-center gap-2">
                                      {group.status === 'rejected' ? <span className="text-rose-500 bg-rose-950/40 px-1 rounded">REJECTED FIX</span> : <span className="text-purple-400"><Clock size={10} className="inline mr-0.5"/> QUEUE</span>} 
@@ -1149,43 +1027,17 @@ export default function App() {
 
                               {isExpanded && (
                                 <div className="w-full pt-4 border-t border-gray-800/50 mt-2 animate-in slide-in-from-top-2">
-                                  
                                   <div className="flex items-center justify-between mb-3 px-1">
-                                    <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces:</div>
+                                    <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces to start:</div>
                                     {role === 'admin' && (
-                                      clearingGroupId === group.id ? (
-                                        <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50">
-                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Delete all?</span>
-                                          <button onClick={async () => {
-                                              setClearingGroupId(null); setIsUploading(true);
-                                              try {
-                                                const uniqueIds = [...new Set(group.subTasks.map(st => st.id))];
-                                                
-                                                const newTasks = tasks.filter(t => !uniqueIds.includes(t.id));
-                                                setTasks(newTasks);
-                                                
-                                                if (useLocalMode) {
-                                                    syncLocal('poshakh_tasks', newTasks);
-                                                } else {
-                                                    for(const id of uniqueIds) if(id) await deleteDoc(doc(db, 'priority_tasks', id));
-                                                }
-                                                showToast("Outfit Queue Cleared!");
-                                                setExpandedTaskGroup(null);
-                                              } catch (e) { showToast("Some items couldn't be deleted.", "error"); } finally { setIsUploading(false); }
-                                          }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                          <button onClick={() => setClearingGroupId(null)} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
-                                        </div>
-                                      ) : (
-                                        <button onClick={() => setClearingGroupId(group.id)} className="text-[10px] text-gray-500 hover:text-rose-500 font-bold uppercase flex items-center gap-1 transition-colors"><Trash2 size={12}/> Clear Outfit</button>
-                                      )
+                                       <button onClick={(e) => { e.stopPropagation(); handleClearOutfit(group); }} className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-950/30 px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-900/50 flex items-center gap-1"><Trash2 size={12}/> Clear Outfit</button>
                                     )}
                                   </div>
-
                                   <div className="flex flex-col gap-2 w-full mb-6">
                                     {group.subTasks.map(st => (
-                                      <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-[#cdfc4c]/10 border-[#cdfc4c]' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
+                                      <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-purple-900/20 border-purple-500' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
                                         <div className="flex items-center gap-3">
-                                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-[#cdfc4c] bg-[#cdfc4c]' : 'border-gray-600'}`}>
+                                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-purple-500 bg-purple-500' : 'border-gray-600'}`}>
                                             {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
                                           </div>
                                           <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
@@ -1212,7 +1064,7 @@ export default function App() {
                                                   <option value="3">P3</option>
                                                   <option value="4">P4</option>
                                                 </select>
-                                                <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Cancel this piece">
+                                                <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
                                                   <Trash2 size={16} />
                                                 </button>
                                               </div>
@@ -1223,29 +1075,14 @@ export default function App() {
                                     ))}
                                   </div>
 
-                                  {renderPhotoUploader()}
-
-                                  <div className="mt-6 flex flex-col gap-3">
+                                  <div className="mt-6">
                                      {(() => {
                                         const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
                                         const hasSelection = selectedSubTasks.length > 0;
-                                        const canSubmit = hasSelection && imagePreview;
                                         return (
-                                          <>
-                                            <button disabled={isUploading || !hasSelection} onClick={() => handleStartTaskSelection(group)} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20">
-                                              <PlayCircle size={18} /> {isUploading ? 'Claiming Task...' : (!hasSelection ? 'Select Sizes to Claim' : 'Start Stitching Now')}
-                                            </button>
-                                            
-                                            <div className="relative flex py-2 items-center">
-                                              <div className="flex-grow border-t border-gray-800"></div>
-                                              <span className="flex-shrink-0 mx-4 text-gray-500 text-[10px] font-bold uppercase tracking-widest">Or skip to submit</span>
-                                              <div className="flex-grow border-t border-gray-800"></div>
-                                            </div>
-
-                                            <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteTaskSelection(group)} className="w-full py-4 bg-gray-800 text-gray-300 hover:text-white hover:bg-gray-700 font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-black/50">
-                                              {isUploading ? 'Uploading...' : (!hasSelection ? 'Select Sizes' : (!imagePreview ? 'Add QC Photo to Submit' : 'Submit for QC Review'))}
-                                            </button>
-                                          </>
+                                          <button disabled={!hasSelection} onClick={() => handleStartStitching(group)} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 disabled:bg-gray-800 disabled:text-gray-500 transition-all shadow-lg shadow-purple-500/20 text-lg flex items-center justify-center gap-2">
+                                            <Scissors size={20}/> {hasSelection ? `Start Stitching (${selectedSubTasks.length})` : 'Select Sizes Above'}
+                                          </button>
                                         );
                                      })()}
                                   </div>
@@ -1259,149 +1096,6 @@ export default function App() {
                   )}
                 </div>
               );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderLiveQueue = () => {
-    // Isolate tasks that are actively being stitched
-    const liveTasks = tasks.filter(t => t.status === 'in_progress');
-    
-    // Group them by whoever claimed them
-    const tasksByTailor = liveTasks.reduce((acc, t) => {
-      const tailor = t.startedBy || 'Unknown';
-      if (!acc[tailor]) acc[tailor] = [];
-      const qty = Number(t.quantity) || 1;
-      for (let i = 0; i < qty; i++) {
-        acc[tailor].push({ ...t, subId: `${t.id}-live-${i}`, quantity: 1 });
-      }
-      return acc;
-    }, {});
-
-    return (
-      <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-2"><Activity size={28} className="text-purple-500"/> Live Floor</h2>
-          <p className="text-gray-400 mt-2">See what is currently on the sewing machines.</p>
-        </div>
-
-        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name to interact here!</div>}
-
-        {Object.keys(tasksByTailor).length === 0 ? (
-          <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center">
-            <Scissors size={48} className="mx-auto mb-4 text-gray-700 opacity-50" />
-            <h3 className="text-xl font-bold text-gray-500 mb-1">The workshop is quiet right now.</h3>
-          </div>
-        ) : (
-          <div className="space-y-8">
-            {Object.entries(tasksByTailor).map(([tailorName, items]) => {
-              const isMyWork = prodForm.tailor === tailorName || role === 'admin';
-              
-              return (
-                <div key={tailorName} className="bg-[#111] border border-purple-900/50 rounded-3xl overflow-hidden shadow-2xl relative">
-                  <div className="absolute top-0 left-0 w-full h-1.5 bg-purple-500"></div>
-                  
-                  <div className="p-6 border-b border-gray-800 flex items-center justify-between gap-4 bg-[#0a0a0a]">
-                     <div className="flex items-center gap-4">
-                       <div className="w-12 h-12 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
-                          <User size={20}/>
-                       </div>
-                       <div>
-                          <h3 className="text-2xl font-black text-white">{tailorName}</h3>
-                          <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-0.5"><Scissors size={12}/> {items.length} active pieces</div>
-                       </div>
-                     </div>
-                     {isMyWork && items.filter(st => selectedSubTaskIds.has(st.subId)).length > 0 && (
-                       <span className="hidden sm:inline-flex bg-[#cdfc4c] text-black text-[10px] font-black px-3 py-1.5 rounded-lg shadow-lg items-center gap-1.5">
-                         <CheckCircle size={12}/> {items.filter(st => selectedSubTaskIds.has(st.subId)).length} Selected
-                       </span>
-                     )}
-                  </div>
-
-                  <div className="p-6 bg-[#0a0a0a]/50">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                       {items.map(st => {
-                          const entryImage = findProductImage(st.product);
-                          const startTime = new Date(st.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                          const isSelected = selectedSubTaskIds.has(st.subId);
-                          
-                          return (
-                            <div key={st.subId} onClick={() => isMyWork && toggleSubTaskSelection(st.subId)} className={`group flex flex-col rounded-2xl border-2 transition-all overflow-hidden relative ${!isMyWork ? 'border-gray-800 bg-black opacity-60' : (isSelected ? 'border-[#cdfc4c] shadow-[0_0_20px_rgba(205,252,76,0.15)] cursor-pointer translate-y-[-4px]' : 'border-gray-800 hover:border-gray-600 cursor-pointer')}`}>
-                               
-                               {/* BIG IMAGE TOP */}
-                               <div className="w-full aspect-[3/4] relative bg-black overflow-hidden">
-                                 {entryImage ? (
-                                    <img src={entryImage} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-110" />
-                                 ) : (
-                                    <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-12 h-12" /></div>
-                                 )}
-                                 
-                                 {/* Dark gradient overlay for text readability */}
-                                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/30 pointer-events-none transition-opacity duration-300"></div>
-
-                                 {/* Checkbox Overlay */}
-                                 {isMyWork && (
-                                   <div className="absolute top-3 right-3 z-10">
-                                      <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-xl backdrop-blur-md ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/40 bg-black/40 group-hover:border-white/80'}`}>
-                                         {isSelected && <CheckCircle size={16} className="text-black" />}
-                                      </div>
-                                   </div>
-                                 )}
-
-                                 {/* Product Title overlaying the image bottom */}
-                                 <div className="absolute bottom-0 left-0 w-full p-3 z-10">
-                                    <div className="flex flex-col">
-                                      <div className="flex items-center gap-1.5 mb-1 opacity-90">
-                                        <Activity size={10} className="text-purple-400"/>
-                                        <span className="text-[9px] text-purple-200 font-bold uppercase tracking-widest">{startTime}</span>
-                                      </div>
-                                      <div className={`font-black text-sm leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
-                                         {st.product}
-                                      </div>
-                                    </div>
-                                 </div>
-                               </div>
-                               
-                               {/* DETAILS STRIP BOTTOM */}
-                               <div className={`p-3 flex items-center justify-between bg-[#111] transition-colors ${isSelected ? 'bg-[#cdfc4c]/10' : ''}`}>
-                                  <div className="flex items-center gap-2">
-                                     <span className={`text-[11px] px-2 py-0.5 rounded font-black uppercase ${isSelected ? 'bg-[#cdfc4c] text-black' : 'bg-gray-800 text-white'}`}>Size {st.size}</span>
-                                  </div>
-                                  
-                                  {isMyWork && (
-                                     <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-7 h-7 rounded-full bg-black border border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all" title="Drop Item">
-                                        <Trash2 size={12} />
-                                     </button>
-                                  )}
-                               </div>
-                            </div>
-                          )
-                       })}
-                    </div>
-
-                    {isMyWork && (
-                       <div className="mt-8 pt-6 border-t border-gray-800">
-                         {renderPhotoUploader()}
-                         
-                         {(() => {
-                            const selectedSubTasks = items.filter(st => selectedSubTaskIds.has(st.subId));
-                            const hasSelection = selectedSubTasks.length > 0;
-                            const canSubmit = hasSelection && imagePreview;
-                            return (
-                              <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteLiveSelection(tailorName, items)} className="w-full py-4 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-lg">
-                                {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!imagePreview ? 'Add QC Photo to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
-                              </button>
-                            );
-                         })()}
-                       </div>
-                    )}
-
-                  </div>
-                </div>
-              )
             })}
           </div>
         )}
@@ -1477,13 +1171,77 @@ export default function App() {
 
           {renderPhotoUploader()}
 
-          <button type="submit" disabled={isUploading || Object.values(prodForm.sizes).reduce((a,b)=>a+b,0) === 0 || !prodForm.tailor || !prodForm.product || !imagePreview} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 mt-6">
-            {isUploading ? 'Uploading Securely...' : (Object.values(prodForm.sizes).reduce((a,b)=>a+b,0) === 0 ? 'Complete Form to Submit' : (!imagePreview ? 'Add QC Photo to Submit' : (editingEntryId ? 'Update Batch' : 'Submit for QC Review')))}
+          {/* Button is no longer disabled - it will click and tell you exactly what is missing via Toast */}
+          <button type="submit" disabled={isUploading} className="w-full py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 mt-6 text-lg">
+            {isUploading ? 'Uploading Securely...' : (editingEntryId ? 'Update Batch Log' : 'Submit Batch for QC Review')}
           </button>
         </form>
       </div>
     </div>
   );
+
+  const renderAddPay = () => {
+    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
+    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
+    
+    const suggestedPay = Math.max(0, periodEarned);
+
+    return (
+      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
+        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
+          <form onSubmit={handlePaySubmit} className="space-y-6">
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
+                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
+                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
+                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
+              </div>
+            </div>
+
+            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
+               <div className="flex items-center gap-2 mb-4">
+                 <CalendarRange size={18} className="text-sky-400" />
+                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
+               </div>
+               
+               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
+                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
+                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+               </div>
+
+               {payForm.tailor ? (
+                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div>
+                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
+                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
+                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
+                    </div>
+                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
+                       Auto-Fill ₹{periodEarned}
+                    </button>
+                 </div>
+               ) : (
+                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
+               )}
+            </div>
+
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
+            
+            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
+          </form>
+        </div>
+      </div>
+    );
+  };
 
   const renderAdminLedger = () => (
     <div className="w-full space-y-6 animate-in fade-in duration-500">
@@ -1556,7 +1314,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-gray-800/50">
                   {finalLedgerEntries.map((entry) => {
-                    const entryImage = findProductImage(entry.product);
+                    const entryImage = products.find(p => p.name === entry.product)?.image;
                     return (
                     <tr key={entry.id} className={`hover:bg-gray-800/30 transition-colors group ${entry.qcStatus === 'rejected' ? 'opacity-50 bg-rose-900/10' : ''}`}>
                       <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
@@ -1636,7 +1394,7 @@ export default function App() {
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {groupedByProduct.map((prod, i) => {
-                  const entryImage = findProductImage(prod.name);
+                  const entryImage = products.find(p => p.name === prod.name)?.image;
                   return (
                   <tr key={i} className="hover:bg-gray-800/30 transition-colors">
                     <td className="px-6 py-4">
@@ -1691,68 +1449,6 @@ export default function App() {
       </div>
     </div>
   );
-
-  const renderAddPay = () => {
-    // Smart Payout Calculation
-    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
-    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
-    
-    return (
-      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
-        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
-          <form onSubmit={handlePaySubmit} className="space-y-6">
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
-                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
-                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
-                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
-              </div>
-            </div>
-
-            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
-               <div className="flex items-center gap-2 mb-4">
-                 <CalendarRange size={18} className="text-sky-400" />
-                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
-               </div>
-               
-               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
-                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
-                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-               </div>
-
-               {payForm.tailor ? (
-                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div>
-                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
-                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
-                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
-                    </div>
-                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
-                       Auto-Fill ₹{periodEarned}
-                    </button>
-                 </div>
-               ) : (
-                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
-               )}
-            </div>
-
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
-            
-            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
-          </form>
-        </div>
-      </div>
-    );
-  };
 
   const renderSetup = () => (
     <div className="w-full max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -1990,7 +1686,6 @@ export default function App() {
   return (
     <div className="min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden pb-28 md:pb-28">
       
-      {/* GLOBAL LIGHTBOX VIEWER */}
       {lightboxData && (
         <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setLightboxData(null)}>
           <div className="relative max-w-5xl max-h-[90vh] w-full flex flex-col items-center">
@@ -2019,7 +1714,6 @@ export default function App() {
         </div>
       )}
 
-      {/* FULL WIDTH HEADER */}
       <header className="bg-[#022c22] border-b border-[#064e3b] px-6 py-4 flex items-center justify-between sticky top-0 z-40 w-full print:hidden shadow-lg">
         <div className="flex items-center gap-4">
           <div className="w-8 h-8 bg-white flex items-center justify-center rounded-lg shadow-sm">
@@ -2047,7 +1741,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* MAIN CONTENT AREA */}
       <main className="flex-1 w-full bg-[#0a0a0a] p-4 md:p-8 print:p-0 print:bg-white transition-all">
         {activeTab === 'tasks' && renderTasks()}
         {activeTab === 'live' && renderLiveQueue()}
@@ -2062,38 +1755,36 @@ export default function App() {
         )}
       </main>
 
-      {/* BOTTOM NAVIGATION */}
       <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-        <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 overflow-x-auto custom-scrollbar ${role === 'staff' ? 'justify-center gap-8' : 'justify-start md:justify-around gap-6 md:gap-0'}`}>
+        <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 ${role === 'staff' ? 'justify-center gap-8' : 'justify-around'}`}>
           
-          <button onClick={() => setActiveTab('tasks')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors relative ${activeTab === 'tasks' ? 'text-rose-500' : 'text-gray-500 hover:text-rose-400'}`}>
+          <button onClick={() => setActiveTab('tasks')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'tasks' ? 'text-rose-500' : 'text-gray-500 hover:text-rose-400'}`}>
             <ListTodo size={20} className={activeTab === 'tasks' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
             <span className="text-[9px] font-black tracking-widest uppercase">Tasks</span>
-            {tasks.filter(t => t.status !== 'in_progress').length > 0 && <span className="absolute top-3 right-4 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse border border-black"></span>}
+            {tasks.length > 0 && <span className="absolute top-3 right-1/4 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse border border-black"></span>}
           </button>
 
-          {/* NEW LIVE KITCHEN TAB */}
-          <button onClick={() => setActiveTab('live')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors relative ${activeTab === 'live' ? 'text-purple-400' : 'text-gray-500 hover:text-purple-300'}`}>
+          <button onClick={() => setActiveTab('live')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'live' ? 'text-purple-500' : 'text-gray-500 hover:text-purple-400'}`}>
             <Activity size={20} className={activeTab === 'live' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
             <span className="text-[9px] font-black tracking-widest uppercase">Live</span>
           </button>
 
-          <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+          <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
             <Shirt size={20} className={activeTab === 'add-batch' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Add Batch</span>
           </button>
 
           {role === 'admin' && (
             <>
-              <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
                 <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
               </button>
-              <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                 <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
               </button>
-              <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                 <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
               </button>
-              <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                 <Settings size={20} className={activeTab === 'setup' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
               </button>
             </>
