@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, PlayCircle
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 import { 
   getFirestore, collection, onSnapshot, addDoc, 
   deleteDoc, doc, setDoc, updateDoc 
@@ -62,6 +62,7 @@ export default function App() {
   const [deletingId, setDeletingId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null); 
   const [cancellingSubId, setCancellingSubId] = useState(null);
+  const [clearingGroupId, setClearingGroupId] = useState(null);
   const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
   const [isTaskProductDropdownOpen, setIsTaskProductDropdownOpen] = useState(false); 
   const [productSearch, setProductSearch] = useState('');
@@ -70,7 +71,7 @@ export default function App() {
   const [expandedPlatforms, setExpandedPlatforms] = useState(new Set(['Shopify / Website']));
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
 
-  // Form States (Platform added)
+  // Form States
   const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' });
 
   const [prodForm, setProdForm] = useState({
@@ -151,8 +152,10 @@ export default function App() {
     const loadLocalData = () => {
       const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
       const localConfig = JSON.parse(localStorage.getItem('poshakh_config') || 'null');
+      const localTasks = JSON.parse(localStorage.getItem('poshakh_tasks') || '[]');
       
       setEntries(localLedger);
+      setTasks(localTasks);
       if (localConfig) {
         setTailors(localConfig.tailors || []);
         setProducts(localConfig.products || []);
@@ -166,14 +169,20 @@ export default function App() {
       setLoading(false);
     };
 
-    const fetchFirebaseDirectly = () => {
+    const initDB = async () => {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) { console.error("Firebase Auth Error:", err); }
+
       try {
         unsubscribeLedger = onSnapshot(collection(db, 'ledger'), (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setEntries(data);
-          setLoading(false);
-        }, (err) => { setUseLocalMode(true); loadLocalData(); });
+          setLoading(false); 
+        }, (err) => { 
+          setUseLocalMode(true); loadLocalData(); 
+        });
 
         unsubscribeConfig = onSnapshot(doc(db, 'config', 'setup'), (docSnap) => {
           if (docSnap.exists()) {
@@ -186,23 +195,32 @@ export default function App() {
             });
             setProdForm(prev => ({ ...prev, tailor: data.tailors?.[0] || '', product: data.products?.[0]?.name || '' }));
           }
-        });
+        }, () => {});
 
         unsubscribeTasks = onSnapshot(collection(db, 'priority_tasks'), (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          const activeTasks = data.filter(t => t.status === 'pending' || t.status === 'rejected').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+          // Included 'in_progress' to support Live Kitchen view
+          const activeTasks = data.filter(t => t.status === 'pending' || t.status === 'rejected' || t.status === 'in_progress').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
           setTasks(activeTasks);
-        });
+        }, () => {});
 
       } catch (err) { setUseLocalMode(true); loadLocalData(); }
     };
 
-    fetchFirebaseDirectly();
+    initDB();
+
+    const timeoutId = setTimeout(() => {
+      setLoading(prev => {
+        if (prev) { setUseLocalMode(true); loadLocalData(); return false; }
+        return prev;
+      });
+    }, 5000);
 
     return () => {
       if (unsubscribeLedger) unsubscribeLedger();
       if (unsubscribeConfig) unsubscribeConfig();
       if (unsubscribeTasks) unsubscribeTasks();
+      clearTimeout(timeoutId);
     };
   }, []);
 
@@ -228,7 +246,7 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const MAX_WIDTH = 1200; // INCREASED FOR HIGH RES
+      const MAX_WIDTH = 1200; 
       const scaleSize = MAX_WIDTH / video.videoWidth;
       const compressedCanvas = document.createElement('canvas');
       compressedCanvas.width = MAX_WIDTH;
@@ -236,7 +254,7 @@ export default function App() {
       const compCtx = compressedCanvas.getContext('2d');
       compCtx.drawImage(canvas, 0, 0, compressedCanvas.width, compressedCanvas.height);
       
-      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85); // INCREASED QUALITY
+      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85); 
       setImagePreview(base64);
       setImageFile('WEBCAM'); 
       stopCamera();
@@ -272,6 +290,13 @@ export default function App() {
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
   const syncLocal = (key, data) => localStorage.setItem(key, JSON.stringify(data));
 
+  const findProductImage = (productName) => {
+    if (!productName || !products) return null;
+    const normalizedSearch = productName.trim().toLowerCase();
+    const found = products.find(p => (p.name || '').trim().toLowerCase() === normalizedSearch);
+    return found ? found.image : null;
+  };
+
   const compressImageToBase64 = (file) => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -281,13 +306,13 @@ export default function App() {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 1200; // INCREASED FOR HIGH RES
+          const MAX_WIDTH = 1200; 
           const scaleSize = MAX_WIDTH / img.width;
           canvas.width = MAX_WIDTH;
           canvas.height = img.height * scaleSize;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85)); // INCREASED QUALITY
+          resolve(canvas.toDataURL('image/jpeg', 0.85)); 
         };
       };
     });
@@ -459,6 +484,41 @@ export default function App() {
     });
   };
 
+  // NEW: Claim task logic for Live Kitchen
+  const handleStartTaskSelection = async (group) => {
+    const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
+    if (selectedSubTasks.length === 0) return showToast("Select at least one piece below!", "error");
+    if (!prodForm.tailor) return showToast("Please select your name on the 'Add Batch' tab first!", "error");
+
+    const taskUpdates = {}; 
+    selectedSubTasks.forEach(st => { taskUpdates[st.id] = (taskUpdates[st.id] || 0) + 1; });
+
+    setIsUploading(true);
+    try {
+      if (!useLocalMode) {
+        for (const [taskId, claimedQty] of Object.entries(taskUpdates)) {
+           const originalTask = tasks.find(t => t.id === taskId);
+           if (!originalTask) continue;
+           const remainingQty = (Number(originalTask.quantity) || 1) - claimedQty;
+
+           if (remainingQty <= 0) {
+             await updateDoc(doc(db, 'priority_tasks', taskId), {
+               status: 'in_progress', startedBy: prodForm.tailor, startedAt: new Date().toISOString()
+             });
+           } else {
+             await updateDoc(doc(db, 'priority_tasks', taskId), { quantity: remainingQty });
+             await addDoc(collection(db, 'priority_tasks'), {
+               ...originalTask, quantity: claimedQty, status: 'in_progress', startedBy: prodForm.tailor, startedAt: new Date().toISOString()
+             });
+           }
+        }
+      }
+      showToast(`Moved to Live Stitching Queue!`);
+      setSelectedSubTaskIds(new Set());
+      if (selectedSubTasks.length === group.subTasks.length) setExpandedTaskGroup(null);
+    } catch(err) { showToast("Error starting task", "error"); } finally { setIsUploading(false); }
+  };
+
   const handleCompleteTaskSelection = async (group) => {
     const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
     if (selectedSubTasks.length === 0) return showToast("Select at least one piece below!", "error");
@@ -500,10 +560,6 @@ export default function App() {
                ...originalTask, quantity: completedQty, status: 'pending_review', completedBy: prodForm.tailor, completedAt: new Date().toISOString()
              });
            }
-           fetch('https://app.poshakhfabrics.com/api/tailor-webhook', {
-             method: 'POST', headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({ taskId, product: originalTask.product, size: originalTask.size, quantity: completedQty, tailor: prodForm.tailor })
-           }).catch(() => {});
         }
       }
 
@@ -522,17 +578,97 @@ export default function App() {
     } catch(err) { showToast("Error completing task", "error"); } finally { setIsUploading(false); }
   };
 
+  // NEW: Submission engine from the Live Kitchen Tab
+  const handleCompleteLiveSelection = async (tailorName, liveSubTasks) => {
+    const selectedSubTasks = liveSubTasks.filter(st => selectedSubTaskIds.has(st.subId));
+    if (selectedSubTasks.length === 0) return showToast("Select items to complete!", "error");
+    if (!imagePreview) return showToast("Please attach a QC photo to submit!", "error");
+
+    const taskUpdates = {}; 
+    selectedSubTasks.forEach(st => { taskUpdates[st.id] = (taskUpdates[st.id] || 0) + 1; });
+    const pieceRate = selectedSubTasks[0].pieceRate || 250;
+
+    // Group items for Ledger
+    const productsMap = {};
+    selectedSubTasks.forEach(st => {
+       if (!productsMap[st.product]) productsMap[st.product] = { sizes: {}, count: 0, platform: st.platform };
+       const s = st.size || 'M';
+       productsMap[st.product].sizes[s] = (productsMap[st.product].sizes[s] || 0) + 1;
+       productsMap[st.product].count += 1;
+    });
+
+    setIsUploading(true);
+    try {
+      let finalImageData = null;
+      if (imageFile === 'WEBCAM') finalImageData = imagePreview;
+      else if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
+
+      if (!useLocalMode) {
+        for (const [taskId, completedQty] of Object.entries(taskUpdates)) {
+           const originalTask = tasks.find(t => t.id === taskId);
+           if (!originalTask) continue;
+           const remainingQty = (Number(originalTask.quantity) || 1) - completedQty;
+
+           if (remainingQty <= 0) {
+             await updateDoc(doc(db, 'priority_tasks', taskId), {
+               status: 'pending_review', completedAt: new Date().toISOString()
+             });
+           } else {
+             await updateDoc(doc(db, 'priority_tasks', taskId), { quantity: remainingQty });
+             await addDoc(collection(db, 'priority_tasks'), {
+               ...originalTask, quantity: completedQty, status: 'pending_review', completedAt: new Date().toISOString()
+             });
+           }
+        }
+      }
+
+      // Record actual ledger logs
+      for (const [prodName, pData] of Object.entries(productsMap)) {
+         const entryData = {
+           type: 'production', date: new Date().toISOString().split('T')[0], tailor: tailorName,
+           product: prodName, platform: pData.platform || 'Shopify / Website', sizes: pData.sizes, totalPieces: pData.count, pieceRate: pieceRate, amount: pData.count * pieceRate,
+           imageUrl: finalImageData, qcStatus: 'pending', timestamp: new Date().toISOString(),
+           note: 'Completed from Live Queue'
+         };
+         if (!useLocalMode) await addDoc(collection(db, 'ledger'), entryData);
+      }
+
+      showToast(`Finished and Sent for QC Review!`);
+      setImageFile(null); setImagePreview(null); setSelectedSubTaskIds(new Set());
+    } catch(err) { showToast("Error submitting", "error"); } finally { setIsUploading(false); }
+  };
+
+  const handleDropTask = async (taskId) => {
+     try {
+        if(!useLocalMode) {
+           await updateDoc(doc(db, 'priority_tasks', taskId), { status: 'pending', startedBy: null, startedAt: null });
+        }
+        showToast("Returned item to main Queue");
+     } catch (e) { showToast("Error dropping task", "error"); }
+  };
+
   const executeCancelSubTask = async (subTask) => {
     try {
       const originalTask = tasks.find(t => t.id === subTask.id);
-      if(originalTask) {
-         const remaining = (Number(originalTask.quantity) || 1) - 1;
-         if (!useLocalMode) {
-            if (remaining <= 0) await deleteDoc(doc(db, 'priority_tasks', originalTask.id));
-            else await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: remaining });
-            showToast("Item removed from queue.");
-         }
+      
+      let newTasks;
+      if (!originalTask || Number(originalTask.quantity) <= 1 || isNaN(Number(originalTask.quantity))) {
+         newTasks = tasks.filter(t => t.id !== subTask.id);
+      } else {
+         newTasks = tasks.map(t => t.id === subTask.id ? { ...t, quantity: Number(originalTask.quantity) - 1 } : t);
       }
+      setTasks(newTasks);
+      
+      if (useLocalMode) {
+         syncLocal('poshakh_tasks', newTasks);
+      } else {
+        if (!originalTask || Number(originalTask.quantity) <= 1 || isNaN(Number(originalTask.quantity))) {
+            await deleteDoc(doc(db, 'priority_tasks', subTask.id));
+        } else {
+            await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
+        }
+      }
+      showToast("Item forcefully removed.");
       setCancellingSubId(null);
     } catch (err) { showToast("Failed to cancel task.", "error"); }
   };
@@ -570,7 +706,6 @@ export default function App() {
     const payAmount = parseFloat(payForm.amount);
     if (!payForm.tailor || !payAmount || payAmount <= 0) return showToast("Enter valid amount.", "error");
 
-    // Smart Tagging for the ledger Note
     let smartNote = payForm.note ? `${payForm.note} ` : '';
     smartNote += `(Settled: ${payForm.periodStart} to ${payForm.periodEnd})`;
 
@@ -717,11 +852,6 @@ export default function App() {
     return Object.entries(groups).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.value - a.value);
   }, [finalLedgerEntries]);
 
-  const currentSelectedProductImage = useMemo(() => {
-    const found = products.find(p => p.name === prodForm.product);
-    return found ? found.image : null;
-  }, [prodForm.product, products]);
-
   const getUrgencyStyles = (createdAt) => {
     if (!createdAt) return 'border-gray-800 bg-[#111]';
     const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
@@ -831,22 +961,22 @@ export default function App() {
         }
     };
 
-    // 1. Group tasks by Platform first, then by Product (Outfit)
-    const tasksByPlatform = tasks.reduce((acc, t) => {
-      // If Taylor is looking, hide tasks assigned to someone else
+    // Ignore Live Items in the Main Queue
+    const tasksByPlatform = tasks.filter(t => t.status !== 'in_progress').reduce((acc, t) => {
       if (role === 'staff' && t.assignee && t.assignee !== 'Any' && t.assignee !== prodForm.tailor) {
          return acc;
       }
 
       const plat = t.platform || 'Shopify / Website';
+      const safeProduct = t.product || 'Unnamed Item'; 
       const taskPriority = getNormalizedPriority(t.priority);
       
       if (!acc[plat]) acc[plat] = {};
       
-      if (!acc[plat][t.product]) {
-        acc[plat][t.product] = { 
-          id: `${plat}-${t.product}`, 
-          product: t.product, 
+      if (!acc[plat][safeProduct]) {
+        acc[plat][safeProduct] = { 
+          id: `${plat}-${safeProduct}`, 
+          product: safeProduct, 
           platform: plat, 
           subTasks: [], 
           status: t.status,
@@ -855,24 +985,22 @@ export default function App() {
           highestPriorityWeight: PRIORITY_WEIGHT[taskPriority] || 2
         };
       } else {
-        // If multiple tasks exist for the same outfit, inherit the highest priority
         const weight = PRIORITY_WEIGHT[taskPriority] || 2;
-        if (weight > acc[plat][t.product].highestPriorityWeight) {
-          acc[plat][t.product].highestPriority = taskPriority;
-          acc[plat][t.product].highestPriorityWeight = weight;
+        if (weight > acc[plat][safeProduct].highestPriorityWeight) {
+          acc[plat][safeProduct].highestPriority = taskPriority;
+          acc[plat][safeProduct].highestPriorityWeight = weight;
         }
       }
       
       const qty = Number(t.quantity) || 1;
-      if (t.status === 'rejected') acc[plat][t.product].status = 'rejected';
+      if (t.status === 'rejected') acc[plat][safeProduct].status = 'rejected';
       
-      // Update oldest task to drive the urgency heatmap border
-      if (new Date(t.createdAt) < new Date(acc[plat][t.product].oldestTask)) {
-          acc[plat][t.product].oldestTask = t.createdAt;
+      if (new Date(t.createdAt) < new Date(acc[plat][safeProduct].oldestTask)) {
+          acc[plat][safeProduct].oldestTask = t.createdAt;
       }
       
       for (let i = 0; i < qty; i++) {
-        acc[plat][t.product].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority });
+        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority, assignee: t.assignee });
       }
       return acc;
     }, {});
@@ -887,7 +1015,6 @@ export default function App() {
       return a.localeCompare(b);
     });
 
-    // Today's Production logic for Quota Rings
     const todayStr = new Date().toISOString().split('T')[0];
     const todayProduction = entries.filter(e => e.type === 'production' && e.date === todayStr && e.qcStatus !== 'rejected');
 
@@ -936,17 +1063,13 @@ export default function App() {
 
         {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
 
-        {tasks.length === 0 ? (
+        {tasks.filter(t => t.status !== 'in_progress').length === 0 ? (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center"><CheckCircle size={48} className="mx-auto mb-4 text-green-500 opacity-50" /><h3 className="text-xl font-bold text-white mb-1">Queue is Empty!</h3></div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
             {sortedPlatforms.map(plat => {
               const platformGroups = Object.values(tasksByPlatform[plat]).sort((a, b) => {
-                // Primary Sort: Priority Level (Highest first)
-                if (b.highestPriorityWeight !== a.highestPriorityWeight) {
-                  return b.highestPriorityWeight - a.highestPriorityWeight;
-                }
-                // Secondary Sort: Alphabetical
+                if (b.highestPriorityWeight !== a.highestPriorityWeight) return b.highestPriorityWeight - a.highestPriorityWeight;
                 return a.product.localeCompare(b.product);
               });
               
@@ -955,7 +1078,6 @@ export default function App() {
               const isPlatExpanded = expandedPlatforms.has(plat);
               const totalPiecesNeeded = platformGroups.reduce((sum, g) => sum + g.subTasks.length, 0);
               
-              // Quota logic (Assuming goal is 20 per platform per day for visualization)
               const platTodayPieces = todayProduction.filter(e => (e.platform || 'Shopify / Website') === plat).reduce((sum, e) => sum + Number(e.totalPieces), 0);
               const dailyQuota = 20; 
               const quotaProgress = Math.min(100, (platTodayPieces / dailyQuota) * 100);
@@ -972,7 +1094,6 @@ export default function App() {
                   >
                     <div className="flex items-center gap-4">
                       <div className="relative w-14 h-14 rounded-2xl bg-purple-900/20 border border-purple-900/50 flex items-center justify-center shrink-0">
-                         {/* Quota Ring overlay */}
                          <svg className="absolute inset-0 w-full h-full -rotate-90 transform" viewBox="0 0 100 100">
                            <circle cx="50" cy="50" r="46" fill="transparent" stroke="#1f2937" strokeWidth="6" />
                            <circle cx="50" cy="50" r="46" fill="transparent" stroke={quotaProgress >= 100 ? "#22c55e" : "#cdfc4c"} strokeWidth="6" strokeDasharray="289" strokeDashoffset={289 - (289 * quotaProgress) / 100} className="transition-all duration-1000 ease-out"/>
@@ -993,7 +1114,7 @@ export default function App() {
                     <div className="p-4 pt-0 border-t border-gray-800/50 bg-[#0a0a0a]/50 h-full">
                       <div className="space-y-4 mt-4">
                         {platformGroups.map(group => {
-                          const productInfo = products.find(p => p.name === group.product);
+                          const entryImage = findProductImage(group.product);
                           const isExpanded = expandedTaskGroup === group.id;
                           const urgencyClass = getUrgencyStyles(group.oldestTask);
                           
@@ -1009,7 +1130,7 @@ export default function App() {
                             <div key={group.id} className={`border rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all ${urgencyClass}`}>
                               
                               <div className="flex items-center w-full gap-4 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
-                                {productInfo?.image ? <img src={productInfo.image} className="w-14 h-14 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-14 h-14 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
+                                {entryImage ? <img src={entryImage} className="w-14 h-14 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-14 h-14 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
                                 <div className="flex-1">
                                   <div className="text-[9px] text-gray-400 font-bold uppercase mb-1 flex flex-wrap items-center gap-2">
                                      {group.status === 'rejected' ? <span className="text-rose-500 bg-rose-950/40 px-1 rounded">REJECTED FIX</span> : <span className="text-purple-400"><Clock size={10} className="inline mr-0.5"/> QUEUE</span>} 
@@ -1028,7 +1149,38 @@ export default function App() {
 
                               {isExpanded && (
                                 <div className="w-full pt-4 border-t border-gray-800/50 mt-2 animate-in slide-in-from-top-2">
-                                  <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 px-1">Select completed pieces:</div>
+                                  
+                                  <div className="flex items-center justify-between mb-3 px-1">
+                                    <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces:</div>
+                                    {role === 'admin' && (
+                                      clearingGroupId === group.id ? (
+                                        <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50">
+                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Delete all?</span>
+                                          <button onClick={async () => {
+                                              setClearingGroupId(null); setIsUploading(true);
+                                              try {
+                                                const uniqueIds = [...new Set(group.subTasks.map(st => st.id))];
+                                                
+                                                const newTasks = tasks.filter(t => !uniqueIds.includes(t.id));
+                                                setTasks(newTasks);
+                                                
+                                                if (useLocalMode) {
+                                                    syncLocal('poshakh_tasks', newTasks);
+                                                } else {
+                                                    for(const id of uniqueIds) if(id) await deleteDoc(doc(db, 'priority_tasks', id));
+                                                }
+                                                showToast("Outfit Queue Cleared!");
+                                                setExpandedTaskGroup(null);
+                                              } catch (e) { showToast("Some items couldn't be deleted.", "error"); } finally { setIsUploading(false); }
+                                          }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                          <button onClick={() => setClearingGroupId(null)} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                        </div>
+                                      ) : (
+                                        <button onClick={() => setClearingGroupId(group.id)} className="text-[10px] text-gray-500 hover:text-rose-500 font-bold uppercase flex items-center gap-1 transition-colors"><Trash2 size={12}/> Clear Outfit</button>
+                                      )
+                                    )}
+                                  </div>
+
                                   <div className="flex flex-col gap-2 w-full mb-6">
                                     {group.subTasks.map(st => (
                                       <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-[#cdfc4c]/10 border-[#cdfc4c]' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
@@ -1073,15 +1225,27 @@ export default function App() {
 
                                   {renderPhotoUploader()}
 
-                                  <div className="mt-6">
+                                  <div className="mt-6 flex flex-col gap-3">
                                      {(() => {
                                         const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
                                         const hasSelection = selectedSubTasks.length > 0;
                                         const canSubmit = hasSelection && imagePreview;
                                         return (
-                                          <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteTaskSelection(group)} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10">
-                                            {isUploading ? 'Uploading Securely...' : (!hasSelection ? 'Select Sizes Above' : (!imagePreview ? 'Add QC Photo to Submit' : 'Submit for QC Review'))}
-                                          </button>
+                                          <>
+                                            <button disabled={isUploading || !hasSelection} onClick={() => handleStartTaskSelection(group)} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20">
+                                              <PlayCircle size={18} /> {isUploading ? 'Claiming Task...' : (!hasSelection ? 'Select Sizes to Claim' : 'Start Stitching Now')}
+                                            </button>
+                                            
+                                            <div className="relative flex py-2 items-center">
+                                              <div className="flex-grow border-t border-gray-800"></div>
+                                              <span className="flex-shrink-0 mx-4 text-gray-500 text-[10px] font-bold uppercase tracking-widest">Or skip to submit</span>
+                                              <div className="flex-grow border-t border-gray-800"></div>
+                                            </div>
+
+                                            <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteTaskSelection(group)} className="w-full py-4 bg-gray-800 text-gray-300 hover:text-white hover:bg-gray-700 font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-black/50">
+                                              {isUploading ? 'Uploading...' : (!hasSelection ? 'Select Sizes' : (!imagePreview ? 'Add QC Photo to Submit' : 'Submit for QC Review'))}
+                                            </button>
+                                          </>
                                         );
                                      })()}
                                   </div>
@@ -1102,69 +1266,145 @@ export default function App() {
     );
   };
 
-  const renderAddPay = () => {
-    // Smart Payout Calculation
-    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
-    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
-    const periodAlreadyPaid = entries.filter(e => e.type === 'payment' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd).reduce((sum, e) => sum + Number(e.amount), 0);
+  const renderLiveQueue = () => {
+    // Isolate tasks that are actively being stitched
+    const liveTasks = tasks.filter(t => t.status === 'in_progress');
     
-    // We auto-suggest the total earned in that period (they can still edit it)
-    const suggestedPay = Math.max(0, periodEarned);
+    // Group them by whoever claimed them
+    const tasksByTailor = liveTasks.reduce((acc, t) => {
+      const tailor = t.startedBy || 'Unknown';
+      if (!acc[tailor]) acc[tailor] = [];
+      const qty = Number(t.quantity) || 1;
+      for (let i = 0; i < qty; i++) {
+        acc[tailor].push({ ...t, subId: `${t.id}-live-${i}`, quantity: 1 });
+      }
+      return acc;
+    }, {});
 
     return (
-      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
-        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
-          <form onSubmit={handlePaySubmit} className="space-y-6">
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
-                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
-                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
-                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
-              </div>
-            </div>
-
-            {/* NEW: Smart Date Range Selection for Payouts */}
-            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
-               <div className="flex items-center gap-2 mb-4">
-                 <CalendarRange size={18} className="text-sky-400" />
-                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
-               </div>
-               
-               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
-                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
-                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-               </div>
-
-               {payForm.tailor ? (
-                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div>
-                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
-                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
-                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
-                    </div>
-                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
-                       Auto-Fill ₹{periodEarned}
-                    </button>
-                 </div>
-               ) : (
-                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
-               )}
-            </div>
-
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
-            
-            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
-          </form>
+      <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in">
+        <div className="text-center mb-8">
+          <h2 className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-2"><Activity size={28} className="text-purple-500"/> Live Floor</h2>
+          <p className="text-gray-400 mt-2">See what is currently on the sewing machines.</p>
         </div>
+
+        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name to interact here!</div>}
+
+        {Object.keys(tasksByTailor).length === 0 ? (
+          <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center">
+            <Scissors size={48} className="mx-auto mb-4 text-gray-700 opacity-50" />
+            <h3 className="text-xl font-bold text-gray-500 mb-1">The workshop is quiet right now.</h3>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {Object.entries(tasksByTailor).map(([tailorName, items]) => {
+              const isMyWork = prodForm.tailor === tailorName || role === 'admin';
+              
+              return (
+                <div key={tailorName} className="bg-[#111] border border-purple-900/50 rounded-3xl overflow-hidden shadow-2xl relative">
+                  <div className="absolute top-0 left-0 w-full h-1.5 bg-purple-500"></div>
+                  
+                  <div className="p-6 border-b border-gray-800 flex items-center justify-between gap-4 bg-[#0a0a0a]">
+                     <div className="flex items-center gap-4">
+                       <div className="w-12 h-12 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
+                          <User size={20}/>
+                       </div>
+                       <div>
+                          <h3 className="text-2xl font-black text-white">{tailorName}</h3>
+                          <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-0.5"><Scissors size={12}/> {items.length} active pieces</div>
+                       </div>
+                     </div>
+                     {isMyWork && items.filter(st => selectedSubTaskIds.has(st.subId)).length > 0 && (
+                       <span className="hidden sm:inline-flex bg-[#cdfc4c] text-black text-[10px] font-black px-3 py-1.5 rounded-lg shadow-lg items-center gap-1.5">
+                         <CheckCircle size={12}/> {items.filter(st => selectedSubTaskIds.has(st.subId)).length} Selected
+                       </span>
+                     )}
+                  </div>
+
+                  <div className="p-6 bg-[#0a0a0a]/50">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                       {items.map(st => {
+                          const entryImage = findProductImage(st.product);
+                          const startTime = new Date(st.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                          const isSelected = selectedSubTaskIds.has(st.subId);
+                          
+                          return (
+                            <div key={st.subId} onClick={() => isMyWork && toggleSubTaskSelection(st.subId)} className={`group flex flex-col rounded-2xl border-2 transition-all overflow-hidden relative ${!isMyWork ? 'border-gray-800 bg-black opacity-60' : (isSelected ? 'border-[#cdfc4c] shadow-[0_0_20px_rgba(205,252,76,0.15)] cursor-pointer translate-y-[-4px]' : 'border-gray-800 hover:border-gray-600 cursor-pointer')}`}>
+                               
+                               {/* BIG IMAGE TOP */}
+                               <div className="w-full aspect-[3/4] relative bg-black overflow-hidden">
+                                 {entryImage ? (
+                                    <img src={entryImage} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-110" />
+                                 ) : (
+                                    <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-12 h-12" /></div>
+                                 )}
+                                 
+                                 {/* Dark gradient overlay for text readability */}
+                                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/30 pointer-events-none transition-opacity duration-300"></div>
+
+                                 {/* Checkbox Overlay */}
+                                 {isMyWork && (
+                                   <div className="absolute top-3 right-3 z-10">
+                                      <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-xl backdrop-blur-md ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/40 bg-black/40 group-hover:border-white/80'}`}>
+                                         {isSelected && <CheckCircle size={16} className="text-black" />}
+                                      </div>
+                                   </div>
+                                 )}
+
+                                 {/* Product Title overlaying the image bottom */}
+                                 <div className="absolute bottom-0 left-0 w-full p-3 z-10">
+                                    <div className="flex flex-col">
+                                      <div className="flex items-center gap-1.5 mb-1 opacity-90">
+                                        <Activity size={10} className="text-purple-400"/>
+                                        <span className="text-[9px] text-purple-200 font-bold uppercase tracking-widest">{startTime}</span>
+                                      </div>
+                                      <div className={`font-black text-sm leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
+                                         {st.product}
+                                      </div>
+                                    </div>
+                                 </div>
+                               </div>
+                               
+                               {/* DETAILS STRIP BOTTOM */}
+                               <div className={`p-3 flex items-center justify-between bg-[#111] transition-colors ${isSelected ? 'bg-[#cdfc4c]/10' : ''}`}>
+                                  <div className="flex items-center gap-2">
+                                     <span className={`text-[11px] px-2 py-0.5 rounded font-black uppercase ${isSelected ? 'bg-[#cdfc4c] text-black' : 'bg-gray-800 text-white'}`}>Size {st.size}</span>
+                                  </div>
+                                  
+                                  {isMyWork && (
+                                     <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-7 h-7 rounded-full bg-black border border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all" title="Drop Item">
+                                        <Trash2 size={12} />
+                                     </button>
+                                  )}
+                               </div>
+                            </div>
+                          )
+                       })}
+                    </div>
+
+                    {isMyWork && (
+                       <div className="mt-8 pt-6 border-t border-gray-800">
+                         {renderPhotoUploader()}
+                         
+                         {(() => {
+                            const selectedSubTasks = items.filter(st => selectedSubTaskIds.has(st.subId));
+                            const hasSelection = selectedSubTasks.length > 0;
+                            const canSubmit = hasSelection && imagePreview;
+                            return (
+                              <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteLiveSelection(tailorName, items)} className="w-full py-4 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-lg">
+                                {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!imagePreview ? 'Add QC Photo to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
+                              </button>
+                            );
+                         })()}
+                       </div>
+                    )}
+
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -1316,7 +1556,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-gray-800/50">
                   {finalLedgerEntries.map((entry) => {
-                    const entryImage = products.find(p => p.name === entry.product)?.image;
+                    const entryImage = findProductImage(entry.product);
                     return (
                     <tr key={entry.id} className={`hover:bg-gray-800/30 transition-colors group ${entry.qcStatus === 'rejected' ? 'opacity-50 bg-rose-900/10' : ''}`}>
                       <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
@@ -1396,7 +1636,7 @@ export default function App() {
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {groupedByProduct.map((prod, i) => {
-                  const entryImage = products.find(p => p.name === prod.name)?.image;
+                  const entryImage = findProductImage(prod.name);
                   return (
                   <tr key={i} className="hover:bg-gray-800/30 transition-colors">
                     <td className="px-6 py-4">
@@ -1451,6 +1691,68 @@ export default function App() {
       </div>
     </div>
   );
+
+  const renderAddPay = () => {
+    // Smart Payout Calculation
+    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
+    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
+    
+    return (
+      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
+        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
+          <form onSubmit={handlePaySubmit} className="space-y-6">
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
+                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
+                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
+                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
+              </div>
+            </div>
+
+            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
+               <div className="flex items-center gap-2 mb-4">
+                 <CalendarRange size={18} className="text-sky-400" />
+                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
+               </div>
+               
+               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
+                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
+                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+               </div>
+
+               {payForm.tailor ? (
+                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div>
+                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
+                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
+                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
+                    </div>
+                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
+                       Auto-Fill ₹{periodEarned}
+                    </button>
+                 </div>
+               ) : (
+                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
+               )}
+            </div>
+
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
+            
+            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
+          </form>
+        </div>
+      </div>
+    );
+  };
 
   const renderSetup = () => (
     <div className="w-full max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -1748,6 +2050,7 @@ export default function App() {
       {/* MAIN CONTENT AREA */}
       <main className="flex-1 w-full bg-[#0a0a0a] p-4 md:p-8 print:p-0 print:bg-white transition-all">
         {activeTab === 'tasks' && renderTasks()}
+        {activeTab === 'live' && renderLiveQueue()}
         {activeTab === 'add-batch' && renderAddBatch()}
         {role === 'admin' && (
           <>
@@ -1761,30 +2064,36 @@ export default function App() {
 
       {/* BOTTOM NAVIGATION */}
       <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-        <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 ${role === 'staff' ? 'justify-center gap-8' : 'justify-around'}`}>
+        <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 overflow-x-auto custom-scrollbar ${role === 'staff' ? 'justify-center gap-8' : 'justify-start md:justify-around gap-6 md:gap-0'}`}>
           
-          <button onClick={() => setActiveTab('tasks')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'tasks' ? 'text-rose-500' : 'text-gray-500 hover:text-rose-400'}`}>
+          <button onClick={() => setActiveTab('tasks')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors relative ${activeTab === 'tasks' ? 'text-rose-500' : 'text-gray-500 hover:text-rose-400'}`}>
             <ListTodo size={20} className={activeTab === 'tasks' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
             <span className="text-[9px] font-black tracking-widest uppercase">Tasks</span>
-            {tasks.length > 0 && <span className="absolute top-3 right-1/4 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse border border-black"></span>}
+            {tasks.filter(t => t.status !== 'in_progress').length > 0 && <span className="absolute top-3 right-4 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse border border-black"></span>}
           </button>
 
-          <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+          {/* NEW LIVE KITCHEN TAB */}
+          <button onClick={() => setActiveTab('live')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors relative ${activeTab === 'live' ? 'text-purple-400' : 'text-gray-500 hover:text-purple-300'}`}>
+            <Activity size={20} className={activeTab === 'live' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
+            <span className="text-[9px] font-black tracking-widest uppercase">Live</span>
+          </button>
+
+          <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
             <Shirt size={20} className={activeTab === 'add-batch' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Add Batch</span>
           </button>
 
           {role === 'admin' && (
             <>
-              <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
                 <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
               </button>
-              <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                 <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
               </button>
-              <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                 <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
               </button>
-              <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-20 shrink-0 h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                 <Settings size={20} className={activeTab === 'setup' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
               </button>
             </>
