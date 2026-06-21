@@ -488,6 +488,198 @@ export default function App() {
     }
   };
 
+  // --- RESTORED HANDLERS (These got lost in the paste!) ---
+  const handlePaySubmit = async (e) => {
+    e.preventDefault();
+    if (!payForm.tailor || !payForm.amount) return showToast("Missing fields", "error");
+    setIsUploading(true);
+    try {
+      const entryData = { ...payForm, type: 'payment', timestamp: new Date().toISOString() };
+      if (useLocalMode) {
+        let newEntries = [...entries];
+        if (editingEntryId) newEntries = newEntries.map(e => e.id === editingEntryId ? { ...entryData, id: editingEntryId } : e);
+        else newEntries = [{ ...entryData, id: crypto.randomUUID() }, ...newEntries];
+        setEntries(newEntries); syncLocal('poshakh_ledger', newEntries);
+      } else {
+        if (editingEntryId) await updateDoc(doc(db, 'ledger', editingEntryId), entryData);
+        else await addDoc(collection(db, 'ledger'), entryData);
+      }
+      showToast(editingEntryId ? "Payment Updated Successfully!" : "Payment Logged!");
+      setEditingEntryId(null);
+      setPayForm(prev => ({ ...prev, amount: '', note: '' }));
+      if (role === 'admin') setActiveTab('ledger');
+    } catch (err) {
+      showToast("Failed to save payment.", "error");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const startEdit = (entry) => {
+    setEditingEntryId(entry.id);
+    if (entry.type === 'payment') {
+      setPayForm({
+        date: entry.date || new Date().toISOString().split('T')[0],
+        tailor: entry.tailor || '',
+        amount: entry.amount || '',
+        note: entry.note || '',
+        periodStart: entry.periodStart || lastCycle.start,
+        periodEnd: entry.periodEnd || lastCycle.end
+      });
+      setActiveTab('pay');
+    } else {
+      setProdForm({
+        date: entry.date || new Date().toISOString().split('T')[0],
+        tailor: entry.tailor || '',
+        product: entry.product || '',
+        sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 },
+        pieceRate: entry.pieceRate || 250,
+        platform: entry.platform || 'Shopify / Website'
+      });
+      if (entry.imageUrl) {
+        setImagePreview(entry.imageUrl);
+        setImageFile(null);
+      } else {
+        setImagePreview(null);
+        setImageFile(null);
+      }
+      setActiveTab('add-batch');
+    }
+  };
+
+  const deleteEntry = async (id) => {
+    if (useLocalMode) {
+      const newEntries = entries.filter(e => e.id !== id);
+      setEntries(newEntries);
+      syncLocal('poshakh_ledger', newEntries);
+    } else {
+      try {
+        await deleteDoc(doc(db, 'ledger', id));
+      } catch (error) {
+        console.error("Failed to delete entry:", error);
+        showToast("Failed to delete entry", "error");
+        return;
+      }
+    }
+    setDeletingId(null);
+    showToast("Entry deleted!");
+  };
+
+  const confirmRejectBatch = async (entry) => {
+    if (useLocalMode) return;
+    await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'rejected' });
+    setRejectingId(null);
+    showToast("Batch Rejected!");
+  };
+
+  const handleApproveBatch = async (entry) => {
+    if (useLocalMode) return;
+    await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'approved' });
+    showToast("Batch Approved!");
+  };
+
+  const handleClearOutfit = async (group) => {
+    const ids = group.subTasks.map(st => st.id);
+    addToBlacklist(ids);
+    setTasks(prev => prev.filter(t => !ids.includes(t.id)));
+    if (!useLocalMode) {
+      ids.forEach(async id => {
+        try { await updateDoc(doc(db, 'priority_tasks', id), { status: 'cancelled', quantity: 0 }); } catch(e) {}
+      });
+    }
+    showToast("Outfit Cleared!");
+  };
+
+  const toggleSubTaskSelection = (subId) => {
+    setSelectedSubTaskIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(subId)) newSet.delete(subId);
+      else newSet.add(subId);
+      return newSet;
+    });
+  };
+
+  const handleDropTask = async (taskId) => {
+    if (useLocalMode) return;
+    await updateDoc(doc(db, 'priority_tasks', taskId), { status: 'pending', startedBy: null, startedAt: null });
+    showToast("Item dropped back to queue.");
+  };
+
+  const handleCompleteLiveSelection = async (tailorName, items) => {
+    const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
+    if (selected.length === 0 || !imagePreview) return;
+    setIsUploading(true);
+    try {
+      let finalImageData = null;
+      if (imageFile === 'WEBCAM') finalImageData = imagePreview;
+      else if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
+
+      const firstItem = selected[0];
+      const entryData = {
+        date: new Date().toISOString().split('T')[0],
+        tailor: tailorName,
+        product: firstItem.product,
+        platform: firstItem.platform || 'Shopify / Website',
+        sizes: {},
+        pieceRate: firstItem.pieceRate || 250,
+        type: 'production',
+        totalPieces: selected.length,
+        amount: selected.length * (firstItem.pieceRate || 250),
+        imageUrl: finalImageData,
+        qcStatus: 'pending',
+        timestamp: new Date().toISOString()
+      };
+      
+      selected.forEach(st => {
+        if(!entryData.sizes[st.size]) entryData.sizes[st.size] = 0;
+        entryData.sizes[st.size] += 1;
+      });
+
+      if (!useLocalMode) {
+        await addDoc(collection(db, 'ledger'), entryData);
+        for (const st of selected) {
+          await updateDoc(doc(db, 'priority_tasks', st.id), { status: 'completed' });
+        }
+      }
+      setSelectedSubTaskIds(new Set());
+      setImageFile(null);
+      setImagePreview(null);
+      showToast("Stitching completed and logged!");
+      if (role === 'staff') setActiveTab('tasks');
+    } catch(e) {
+      showToast("Failed to complete items.", "error");
+    }
+    setIsUploading(false);
+  };
+
+  const handleStartStitching = async (group) => {
+    const selected = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
+    if (selected.length === 0) return;
+    if (!useLocalMode) {
+      for (const st of selected) {
+        await updateDoc(doc(db, 'priority_tasks', st.id), { 
+          status: 'in_progress', 
+          startedBy: prodForm.tailor || 'Unknown', 
+          startedAt: new Date().toISOString() 
+        });
+      }
+    }
+    setSelectedSubTaskIds(new Set());
+    setActiveTab('live');
+    showToast("Started stitching!");
+  };
+
+  const executeCancelSubTask = async (st) => {
+    addToBlacklist([st.id]);
+    setTasks(prev => prev.filter(t => t.id !== st.id));
+    if (!useLocalMode) {
+      try { await updateDoc(doc(db, 'priority_tasks', st.id), { status: 'cancelled', quantity: 0 }); } catch(e) {}
+    }
+    setCancellingSubId(null);
+    showToast("Piece removed!");
+  };
+  // --------------------------------------------------------
+
   const timeFilteredEntries = useMemo(() => {
     if (dashboardTimeFilter === 'all') return entries;
     const current = getPayCycleDates(0);
@@ -1171,7 +1363,6 @@ export default function App() {
 
           {renderPhotoUploader()}
 
-          {/* Button is no longer disabled - it will click and tell you exactly what is missing via Toast */}
           <button type="submit" disabled={isUploading} className="w-full py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 mt-6 text-lg">
             {isUploading ? 'Uploading Securely...' : (editingEntryId ? 'Update Batch Log' : 'Submit Batch for QC Review')}
           </button>
@@ -1184,8 +1375,6 @@ export default function App() {
     const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
     const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
     
-    const suggestedPay = Math.max(0, periodEarned);
-
     return (
       <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
