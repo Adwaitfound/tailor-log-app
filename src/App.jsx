@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -56,6 +56,7 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [toast, setToast] = useState(null);
   const [useLocalMode, setUseLocalMode] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
@@ -130,13 +131,22 @@ export default function App() {
       return newBlacklist;
   };
 
+  // Fullscreen Listener
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
       #root { max-width: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
       body, html { width: 100%; margin: 0; padding: 0; overflow-x: hidden; background-color: #0a0a0a; }
-      .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar { height: 8px; width: 6px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 10px; }
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
       .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
       .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
@@ -434,7 +444,7 @@ export default function App() {
   const handleProdSubmit = async (e) => {
     e.preventDefault();
     
-    // EXPLICIT ERROR MESSAGES (Button is no longer disabled, it tells you exactly what is wrong)
+    // EXPLICIT ERROR MESSAGES
     if (!prodForm.tailor) return showToast("Missing: Please select a Tailor.", "error");
     if (!prodForm.product) return showToast("Missing: Please select a Product.", "error");
 
@@ -488,7 +498,7 @@ export default function App() {
     }
   };
 
-  // --- RESTORED HANDLERS (These got lost in the paste!) ---
+  // --- CORE SYSTEM HANDLERS ---
   const handlePaySubmit = async (e) => {
     e.preventDefault();
     if (!payForm.tailor || !payForm.amount) return showToast("Missing fields", "error");
@@ -677,6 +687,16 @@ export default function App() {
     }
     setCancellingSubId(null);
     showToast("Piece removed!");
+  };
+
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.log(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
   };
   // --------------------------------------------------------
 
@@ -883,93 +903,103 @@ export default function App() {
     }, {});
 
     return (
-      <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-2"><Activity size={28} className="text-purple-500"/> Live Floor</h2>
-          <p className="text-gray-400 mt-2">See what is currently on the sewing machines.</p>
+      <div className={`w-full ${isFullscreen ? 'max-w-none' : ''} space-y-6 animate-in fade-in`}>
+        
+        {/* KIOSK HEADER */}
+        <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 mb-8 relative ${isFullscreen ? 'p-6 bg-[#111] border-b border-gray-800 sticky top-0 z-40 shadow-xl' : 'px-4'}`}>
+           <div className="text-left flex-1 w-full">
+             <h2 className={`font-black tracking-tight text-white flex items-center justify-center sm:justify-start gap-3 ${isFullscreen ? 'text-4xl md:text-5xl' : 'text-3xl'}`}>
+               <Activity size={isFullscreen ? 36 : 28} className="text-purple-500"/> Live Floor
+             </h2>
+             <p className="text-gray-400 mt-2 text-center sm:text-left text-sm md:text-lg">Factory Production Dashboard</p>
+           </div>
+           <button onClick={toggleFullScreen} className={`flex items-center justify-center gap-2 bg-purple-900/40 hover:bg-purple-500 border border-purple-500/50 hover:text-white px-5 py-3 rounded-xl text-sm font-bold transition-all shadow-lg w-full sm:w-auto ${isFullscreen ? 'text-white bg-purple-600' : 'text-purple-300'}`}>
+             {isFullscreen ? <><Minimize size={18}/> Exit Kiosk Mode</> : <><Maximize size={18}/> Enter Kiosk Mode</>}
+           </button>
         </div>
 
-        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name to interact here!</div>}
+        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6 mx-4">Please go to "Add Batch" and select your name to interact here!</div>}
 
         {Object.keys(tasksByTailor).length === 0 ? (
-          <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center">
+          <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center max-w-4xl mx-auto m-4">
             <Scissors size={48} className="mx-auto mb-4 text-gray-700 opacity-50" />
             <h3 className="text-xl font-bold text-gray-500 mb-1">The workshop is quiet right now.</h3>
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className={`space-y-8 ${isFullscreen ? 'px-6 pb-6' : 'px-2 md:px-0'}`}>
             {Object.entries(tasksByTailor).map(([tailorName, items]) => {
               const isMyWork = prodForm.tailor === tailorName || role === 'admin';
               
               return (
-                <div key={tailorName} className="bg-[#111] border border-purple-900/50 rounded-3xl overflow-hidden shadow-2xl relative">
+                <div key={tailorName} className="bg-[#111] border border-purple-900/50 rounded-3xl overflow-hidden shadow-2xl relative flex flex-col">
                   <div className="absolute top-0 left-0 w-full h-1.5 bg-purple-500"></div>
                   
-                  <div className="p-6 border-b border-gray-800 flex items-center justify-between gap-4 bg-[#0a0a0a]">
+                  <div className="p-6 border-b border-gray-800 flex flex-wrap items-center justify-between gap-4 bg-[#0a0a0a]">
                      <div className="flex items-center gap-4">
-                       <div className="w-12 h-12 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
-                          <User size={20}/>
+                       <div className="w-14 h-14 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
+                          <User size={24}/>
                        </div>
                        <div>
-                          <h3 className="text-2xl font-black text-white">{tailorName}</h3>
-                          <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-0.5"><Scissors size={12}/> {items.length} active pieces</div>
+                          <h3 className="text-3xl font-black text-white">{tailorName}</h3>
+                          <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-1"><Scissors size={12}/> {items.length} active pieces</div>
                        </div>
                      </div>
                      {isMyWork && items.filter(st => selectedSubTaskIds.has(st.subId)).length > 0 && (
-                       <span className="hidden sm:inline-flex bg-[#cdfc4c] text-black text-[10px] font-black px-3 py-1.5 rounded-lg shadow-lg items-center gap-1.5">
-                         <CheckCircle size={12}/> {items.filter(st => selectedSubTaskIds.has(st.subId)).length} Selected
+                       <span className="bg-[#cdfc4c] text-black text-xs font-black px-4 py-2 rounded-xl shadow-lg flex items-center gap-2">
+                         <CheckCircle size={16}/> {items.filter(st => selectedSubTaskIds.has(st.subId)).length} Selected
                        </span>
                      )}
                   </div>
 
+                  {/* MEGA HORIZONTAL ROW */}
                   <div className="p-6 bg-[#0a0a0a]/50">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    <div className="flex overflow-x-auto gap-5 pb-6 custom-scrollbar snap-x snap-mandatory items-stretch">
                        {items.map(st => {
                           const entryImage = findProductImage(st.product);
                           const startTime = new Date(st.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                           const isSelected = selectedSubTaskIds.has(st.subId);
                           
                           return (
-                            <div key={st.subId} onClick={() => isMyWork && toggleSubTaskSelection(st.subId)} className={`group flex flex-col rounded-2xl border-2 transition-all overflow-hidden relative ${!isMyWork ? 'border-gray-800 bg-black opacity-60' : (isSelected ? 'border-[#cdfc4c] shadow-[0_0_20px_rgba(205,252,76,0.15)] cursor-pointer translate-y-[-4px]' : 'border-gray-800 hover:border-gray-600 cursor-pointer')}`}>
+                            <div key={st.subId} onClick={() => isMyWork && toggleSubTaskSelection(st.subId)} className={`group flex flex-col rounded-2xl border-2 transition-all overflow-hidden relative shrink-0 snap-start w-[260px] sm:w-[300px] lg:w-[340px] ${!isMyWork ? 'border-gray-800 bg-black opacity-60' : (isSelected ? 'border-[#cdfc4c] shadow-[0_0_20px_rgba(205,252,76,0.15)] cursor-pointer translate-y-[-4px]' : 'border-gray-800 hover:border-gray-600 cursor-pointer')}`}>
                                
-                               <div className="w-full aspect-[3/4] relative bg-black overflow-hidden">
+                               <div className="w-full aspect-[3/4] relative bg-black overflow-hidden shrink-0">
                                  {entryImage ? (
                                     <img src={entryImage} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-110" />
                                  ) : (
-                                    <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-12 h-12" /></div>
+                                    <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>
                                  )}
                                  
                                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/30 pointer-events-none transition-opacity duration-300"></div>
 
                                  {isMyWork && (
-                                   <div className="absolute top-3 right-3 z-10">
-                                      <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-xl backdrop-blur-md ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/40 bg-black/40 group-hover:border-white/80'}`}>
-                                         {isSelected && <CheckCircle size={16} className="text-black" />}
+                                   <div className="absolute top-4 right-4 z-10">
+                                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-xl backdrop-blur-md ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/40 bg-black/40 group-hover:border-white/80'}`}>
+                                         {isSelected && <CheckCircle size={20} className="text-black" />}
                                       </div>
                                    </div>
                                  )}
 
-                                 <div className="absolute bottom-0 left-0 w-full p-3 z-10">
+                                 <div className="absolute bottom-0 left-0 w-full p-4 z-10">
                                     <div className="flex flex-col">
-                                      <div className="flex items-center gap-1.5 mb-1 opacity-90">
-                                        <Activity size={10} className="text-purple-400"/>
-                                        <span className="text-[9px] text-purple-200 font-bold uppercase tracking-widest">{startTime}</span>
+                                      <div className="flex items-center gap-2 mb-2 opacity-90">
+                                        <Activity size={12} className="text-purple-400"/>
+                                        <span className="text-[10px] text-purple-200 font-bold uppercase tracking-widest">{startTime}</span>
                                       </div>
-                                      <div className={`font-black text-sm leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
+                                      <div className={`font-black text-lg leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
                                          {st.product}
                                       </div>
                                     </div>
                                  </div>
                                </div>
                                
-                               <div className={`p-3 flex items-center justify-between bg-[#111] transition-colors ${isSelected ? 'bg-[#cdfc4c]/10' : ''}`}>
+                               <div className={`p-4 flex flex-1 items-center justify-between bg-[#111] transition-colors ${isSelected ? 'bg-[#cdfc4c]/10' : ''}`}>
                                   <div className="flex items-center gap-2">
-                                     <span className={`text-[11px] px-2 py-0.5 rounded font-black uppercase ${isSelected ? 'bg-[#cdfc4c] text-black' : 'bg-gray-800 text-white'}`}>Size {st.size}</span>
+                                     <span className={`text-sm px-3 py-1 rounded font-black uppercase ${isSelected ? 'bg-[#cdfc4c] text-black' : 'bg-gray-800 text-white'}`}>Size {st.size}</span>
                                   </div>
                                   
                                   {isMyWork && (
-                                     <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-7 h-7 rounded-full bg-black border border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all" title="Drop Item">
-                                        <Trash2 size={12} />
+                                     <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-8 h-8 rounded-full bg-black border border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all" title="Drop Item">
+                                        <Trash2 size={14} />
                                      </button>
                                   )}
                                </div>
@@ -979,7 +1009,7 @@ export default function App() {
                     </div>
 
                     {isMyWork && (
-                       <div className="mt-8 pt-6 border-t border-gray-800">
+                       <div className="mt-2 pt-6 border-t border-gray-800 max-w-3xl">
                          {renderPhotoUploader()}
                          
                          {(() => {
@@ -987,7 +1017,7 @@ export default function App() {
                             const hasSelection = selectedSubTasks.length > 0;
                             const canSubmit = hasSelection && imagePreview;
                             return (
-                              <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteLiveSelection(tailorName, items)} className="w-full py-4 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-lg">
+                              <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteLiveSelection(tailorName, items)} className="w-full py-5 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-xl">
                                 {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!imagePreview ? 'Add QC Photo to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
                               </button>
                             );
@@ -1873,7 +1903,7 @@ export default function App() {
   if (!isLoggedIn) return renderLogin();
 
   return (
-    <div className="min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden pb-28 md:pb-28">
+    <div className={`min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden ${isFullscreen ? 'pb-0' : 'pb-28 md:pb-28'}`}>
       
       {lightboxData && (
         <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setLightboxData(null)}>
@@ -1903,34 +1933,36 @@ export default function App() {
         </div>
       )}
 
-      <header className="bg-[#022c22] border-b border-[#064e3b] px-6 py-4 flex items-center justify-between sticky top-0 z-40 w-full print:hidden shadow-lg">
-        <div className="flex items-center gap-4">
-          <div className="w-8 h-8 bg-white flex items-center justify-center rounded-lg shadow-sm">
-            <PoshakhLogo size={18} />
+      {!isFullscreen && (
+        <header className="bg-[#022c22] border-b border-[#064e3b] px-6 py-4 flex items-center justify-between sticky top-0 z-40 w-full print:hidden shadow-lg">
+          <div className="flex items-center gap-4">
+            <div className="w-8 h-8 bg-white flex items-center justify-center rounded-lg shadow-sm">
+              <PoshakhLogo size={18} />
+            </div>
+            <h1 className="text-xl font-black tracking-tight text-white hidden sm:block">Poshakh</h1>
+            {role === 'admin' && (
+              <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full">
+                <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
+                {useLocalMode ? 'LOCAL MODE' : 'CLOUD ACTIVE'}
+              </span>
+            )}
           </div>
-          <h1 className="text-xl font-black tracking-tight text-white hidden sm:block">Poshakh</h1>
-          {role === 'admin' && (
-            <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full">
-              <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
-              {useLocalMode ? 'LOCAL MODE' : 'CLOUD ACTIVE'}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right hidden sm:block">
-            <div className="text-sm font-bold text-white">{role === 'admin' ? 'Admin' : 'Staff'}</div>
-            <div className="text-[10px] text-green-500 font-bold tracking-widest uppercase">Workspace</div>
+          <div className="flex items-center gap-4">
+            <div className="text-right hidden sm:block">
+              <div className="text-sm font-bold text-white">{role === 'admin' ? 'Admin' : 'Staff'}</div>
+              <div className="text-[10px] text-green-500 font-bold tracking-widest uppercase">Workspace</div>
+            </div>
+            <div className="w-10 h-10 rounded-full bg-green-900 flex items-center justify-center text-green-400 border border-green-700">
+              <User size={18} />
+            </div>
+            <button onClick={handleLogout} className="text-gray-400 hover:text-white transition-colors ml-2" title="Switch User / Logout">
+              <LogOut size={20} />
+            </button>
           </div>
-          <div className="w-10 h-10 rounded-full bg-green-900 flex items-center justify-center text-green-400 border border-green-700">
-            <User size={18} />
-          </div>
-          <button onClick={handleLogout} className="text-gray-400 hover:text-white transition-colors ml-2" title="Switch User / Logout">
-            <LogOut size={20} />
-          </button>
-        </div>
-      </header>
+        </header>
+      )}
 
-      <main className="flex-1 w-full bg-[#0a0a0a] p-4 md:p-8 print:p-0 print:bg-white transition-all">
+      <main className={`flex-1 w-full bg-[#0a0a0a] ${activeTab === 'live' ? (isFullscreen ? 'p-0' : 'p-2 md:p-4') : 'p-4 md:p-8'} print:p-0 print:bg-white transition-all`}>
         {activeTab === 'tasks' && renderTasks()}
         {activeTab === 'live' && renderLiveQueue()}
         {activeTab === 'add-batch' && renderAddBatch()}
@@ -1944,43 +1976,45 @@ export default function App() {
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-        <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 ${role === 'staff' ? 'justify-center gap-8' : 'justify-around'}`}>
-          
-          <button onClick={() => setActiveTab('tasks')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'tasks' ? 'text-rose-500' : 'text-gray-500 hover:text-rose-400'}`}>
-            <ListTodo size={20} className={activeTab === 'tasks' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
-            <span className="text-[9px] font-black tracking-widest uppercase">Tasks</span>
-            {tasks.length > 0 && <span className="absolute top-3 right-1/4 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse border border-black"></span>}
-          </button>
+      {!isFullscreen && (
+        <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+          <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 ${role === 'staff' ? 'justify-center gap-8' : 'justify-around'}`}>
+            
+            <button onClick={() => setActiveTab('tasks')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'tasks' ? 'text-rose-500' : 'text-gray-500 hover:text-rose-400'}`}>
+              <ListTodo size={20} className={activeTab === 'tasks' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
+              <span className="text-[9px] font-black tracking-widest uppercase">Tasks</span>
+              {tasks.length > 0 && <span className="absolute top-3 right-1/4 w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse border border-black"></span>}
+            </button>
 
-          <button onClick={() => setActiveTab('live')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'live' ? 'text-purple-500' : 'text-gray-500 hover:text-purple-400'}`}>
-            <Activity size={20} className={activeTab === 'live' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
-            <span className="text-[9px] font-black tracking-widest uppercase">Live</span>
-          </button>
+            <button onClick={() => setActiveTab('live')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'live' ? 'text-purple-500' : 'text-gray-500 hover:text-purple-400'}`}>
+              <Activity size={20} className={activeTab === 'live' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} />
+              <span className="text-[9px] font-black tracking-widest uppercase">Live</span>
+            </button>
 
-          <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-            <Shirt size={20} className={activeTab === 'add-batch' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Add Batch</span>
-          </button>
+            <button onClick={() => { setActiveTab('add-batch'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors ${activeTab === 'add-batch' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+              <Shirt size={20} className={activeTab === 'add-batch' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Add Batch</span>
+            </button>
 
-          {role === 'admin' && (
-            <>
-              <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
-                <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
-              </button>
-              <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-                <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
-              </button>
-              <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-                <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
-              </button>
-              <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
-                <Settings size={20} className={activeTab === 'setup' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
-              </button>
-            </>
-          )}
+            {role === 'admin' && (
+              <>
+                <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
+                  <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
+                </button>
+                <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                  <IndianRupee size={20} className={activeTab === 'pay' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Pay</span>
+                </button>
+                <button onClick={() => setActiveTab('sign-off')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'sign-off' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                  <PenTool size={20} className={activeTab === 'sign-off' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Sign-Off</span>
+                </button>
+                <button onClick={() => setActiveTab('setup')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'setup' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                  <Settings size={20} className={activeTab === 'setup' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Setup</span>
+                </button>
+              </>
+            )}
 
-        </div>
-      </nav>
+          </div>
+        </nav>
+      )}
     </div>
   );
 }
