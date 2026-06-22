@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -66,9 +66,12 @@ export default function App() {
   const [isTaskProductDropdownOpen, setIsTaskProductDropdownOpen] = useState(false); 
   const [productSearch, setProductSearch] = useState('');
   
+  // Task UI State
   const [expandedTaskGroup, setExpandedTaskGroup] = useState(null);
-  const [expandedPlatforms, setExpandedPlatforms] = useState(new Set(['Shopify / Website']));
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
+  const [taskSearchQuery, setTaskSearchQuery] = useState('');
+  const [taskFilterOption, setTaskFilterOption] = useState('All');
+  const [activeTaskPlatform, setActiveTaskPlatform] = useState('Shopify / Website');
 
   // Form States
   const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' });
@@ -150,6 +153,8 @@ export default function App() {
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
       .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
       .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     `;
     document.head.appendChild(style);
 
@@ -615,6 +620,7 @@ export default function App() {
     showToast("Item dropped back to queue.");
   };
 
+  // ✅ Fixed Grouping Logic for Multiple Products
   const handleCompleteLiveSelection = async (tailorName, items) => {
     const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0 || !imagePreview) return;
@@ -624,39 +630,83 @@ export default function App() {
       if (imageFile === 'WEBCAM') finalImageData = imagePreview;
       else if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
 
-      const firstItem = selected[0];
-      const entryData = {
-        date: new Date().toISOString().split('T')[0],
-        tailor: tailorName,
-        product: firstItem.product,
-        platform: firstItem.platform || 'Shopify / Website',
-        sizes: {},
-        pieceRate: firstItem.pieceRate || 250,
-        type: 'production',
-        totalPieces: selected.length,
-        amount: selected.length * (firstItem.pieceRate || 250),
-        imageUrl: finalImageData,
-        qcStatus: 'pending',
-        timestamp: new Date().toISOString()
-      };
-      
-      selected.forEach(st => {
-        if(!entryData.sizes[st.size]) entryData.sizes[st.size] = 0;
-        entryData.sizes[st.size] += 1;
-      });
+      // Group selected items by Product Name
+      const groupedByProduct = selected.reduce((acc, st) => {
+        const prodName = st.product || 'Unnamed Item';
+        if (!acc[prodName]) acc[prodName] = [];
+        acc[prodName].push(st);
+        return acc;
+      }, {});
 
       if (!useLocalMode) {
-        await addDoc(collection(db, 'ledger'), entryData);
+        // Iterate through each distinct product group and create a separate ledger entry
+        for (const [productName, productTasks] of Object.entries(groupedByProduct)) {
+          const firstItem = productTasks[0];
+          
+          const entryData = {
+            date: new Date().toISOString().split('T')[0],
+            tailor: tailorName,
+            product: productName,
+            platform: firstItem.platform || 'Shopify / Website',
+            sizes: {},
+            pieceRate: firstItem.pieceRate || 250,
+            type: 'production',
+            totalPieces: productTasks.length,
+            amount: productTasks.length * (firstItem.pieceRate || 250),
+            imageUrl: finalImageData, // Share the same QC photo
+            qcStatus: 'pending',
+            timestamp: new Date().toISOString()
+          };
+          
+          // Calculate sizes just for this product group
+          productTasks.forEach(st => {
+            if(!entryData.sizes[st.size]) entryData.sizes[st.size] = 0;
+            entryData.sizes[st.size] += 1;
+          });
+
+          await addDoc(collection(db, 'ledger'), entryData);
+        }
+
+        // Mark all individual tasks as completed
         for (const st of selected) {
           await updateDoc(doc(db, 'priority_tasks', st.id), { status: 'completed' });
         }
+      } else {
+        let newEntries = [...entries];
+        for (const [productName, productTasks] of Object.entries(groupedByProduct)) {
+           const firstItem = productTasks[0];
+           const entryData = {
+              id: crypto.randomUUID(),
+              date: new Date().toISOString().split('T')[0],
+              tailor: tailorName,
+              product: productName,
+              platform: firstItem.platform || 'Shopify / Website',
+              sizes: {},
+              pieceRate: firstItem.pieceRate || 250,
+              type: 'production',
+              totalPieces: productTasks.length,
+              amount: productTasks.length * (firstItem.pieceRate || 250),
+              imageUrl: finalImageData,
+              qcStatus: 'pending',
+              timestamp: new Date().toISOString()
+           };
+           productTasks.forEach(st => {
+              if(!entryData.sizes[st.size]) entryData.sizes[st.size] = 0;
+              entryData.sizes[st.size] += 1;
+           });
+           newEntries = [entryData, ...newEntries];
+        }
+        setEntries(newEntries);
+        syncLocal('poshakh_ledger', newEntries);
       }
+
       setSelectedSubTaskIds(new Set());
       setImageFile(null);
       setImagePreview(null);
       showToast("Stitching completed and logged!");
       if (role === 'staff') setActiveTab('tasks');
     } catch(e) {
+      console.error(e);
       showToast("Failed to complete items.", "error");
     }
     setIsUploading(false);
@@ -1046,6 +1096,7 @@ export default function App() {
         return '3';
     };
 
+    // 🛡️ DUP-KEY FIX: Safely strip 'id' from copied item so Firebase assigns a new unique one
     const updateTaskField = async (taskId, field, newValue) => {
         if(useLocalMode) return;
         const originalTask = tasks.find(t => t.id === taskId);
@@ -1053,20 +1104,32 @@ export default function App() {
             if (Number(originalTask.quantity) <= 1) {
                 await updateDoc(doc(db, 'priority_tasks', originalTask.id), { [field]: newValue });
             } else {
+                const { id, ...taskDataWithoutId } = originalTask;
                 await updateDoc(doc(db, 'priority_tasks', originalTask.id), { quantity: Number(originalTask.quantity) - 1 });
-                await addDoc(collection(db, 'priority_tasks'), { ...originalTask, quantity: 1, [field]: newValue });
+                await addDoc(collection(db, 'priority_tasks'), { ...taskDataWithoutId, quantity: 1, [field]: newValue });
             }
             showToast(`${field.charAt(0).toUpperCase() + field.slice(1)} updated!`);
         }
     };
 
-    const pendingTasks = tasks.filter(t => t.status === 'pending' || t.status === 'rejected');
+    // 1. Pre-filter by Status + User Settings
+    const filteredPendingTasks = tasks.filter(t => {
+      const isPendingOrRejected = t.status === 'pending' || t.status === 'rejected';
+      if (!isPendingOrRejected) return false;
+      
+      const priority = getNormalizedPriority(t.priority);
+      if (taskFilterOption === 'Urgent' && priority !== '1') return false;
+      
+      const taskAssignee = t.assignee || 'Any';
+      if (taskFilterOption === 'Mine' && taskAssignee !== prodForm.tailor && role !== 'admin') return false;
+      
+      if (taskSearchQuery && !(t.product || '').toLowerCase().includes(String(taskSearchQuery).toLowerCase())) return false;
+      
+      return true;
+    });
 
-    const tasksByPlatform = pendingTasks.reduce((acc, t) => {
-      if (role === 'staff' && t.assignee && t.assignee !== 'Any' && t.assignee !== prodForm.tailor) {
-         return acc;
-      }
-
+    // 2. Group into Data Structure
+    const tasksByPlatform = filteredPendingTasks.reduce((acc, t) => {
       const plat = t.platform || 'Shopify / Website';
       const taskPriority = getNormalizedPriority(t.priority);
       const safeProduct = t.product || 'Unnamed Item';
@@ -1115,12 +1178,53 @@ export default function App() {
       return a.localeCompare(b);
     });
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const todayProduction = entries.filter(e => e.type === 'production' && e.date === todayStr && e.qcStatus !== 'rejected');
+    const displayPlatform = (sortedPlatforms.length > 0 && !sortedPlatforms.includes(activeTaskPlatform)) ? sortedPlatforms[0] : activeTaskPlatform;
+
+    const activePlatformGroups = tasksByPlatform[displayPlatform] ? Object.values(tasksByPlatform[displayPlatform]).sort((a, b) => {
+      if (b.highestPriorityWeight !== a.highestPriorityWeight) return b.highestPriorityWeight - a.highestPriorityWeight;
+      return a.product.localeCompare(b.product);
+    }) : [];
 
     return (
-      <div className="w-full max-w-4xl mx-auto space-y-6 animate-in fade-in">
-        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-2"><ListTodo size={28} className="text-rose-500"/> Priority Tasks</h2><p className="text-gray-400 mt-2">Urgent items grouped by Sales Channel.</p></div>
+      <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20 relative">
+        
+        {/* MEGA DASHBOARD: Sticky Command Bar */}
+        <div className="sticky top-0 z-30 bg-[#0a0a0a]/95 backdrop-blur-xl pt-2 pb-4 border-b border-gray-800 -mx-4 px-4 md:-mx-8 md:px-8">
+           
+           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+              <div>
+                 <h2 className="text-3xl font-black tracking-tight text-white flex items-center gap-2"><ListTodo size={28} className="text-rose-500"/> Priority Tasks</h2>
+                 <p className="text-gray-400 mt-1">Urgent items grouped by Sales Channel.</p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                 <div className="relative w-full sm:w-64">
+                   <Search size={16} className="absolute left-3 top-3 text-gray-500"/>
+                   <input type="text" value={taskSearchQuery} onChange={(e) => setTaskSearchQuery(e.target.value)} placeholder="Search styles..." className="w-full pl-10 pr-4 py-2 bg-[#111] border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-rose-500 outline-none text-white"/>
+                 </div>
+                 
+                 <div className="relative">
+                   <Filter size={16} className="absolute left-3 top-3 text-gray-500"/>
+                   <select value={taskFilterOption} onChange={(e) => setTaskFilterOption(e.target.value)} className="w-full sm:w-auto pl-10 pr-4 py-2 bg-[#111] border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-rose-500 outline-none appearance-none text-white font-bold cursor-pointer">
+                     <option value="All">All Open Tasks</option>
+                     <option value="Urgent">🔥 Urgent Priority Only</option>
+                     {role !== 'admin' && <option value="Mine">👤 My Assigned Tasks</option>}
+                   </select>
+                   <ChevronDown size={14} className="absolute right-3 top-3.5 text-gray-500 pointer-events-none"/>
+                 </div>
+              </div>
+           </div>
+
+           {/* Platform Tabs */}
+           <div className="flex overflow-x-auto gap-2 no-scrollbar pb-1">
+              {sortedPlatforms.length === 0 && <div className="text-gray-600 text-sm italic">No platforms with pending tasks.</div>}
+              {sortedPlatforms.map(plat => (
+                 <button key={plat} onClick={() => setActiveTaskPlatform(plat)} className={`px-6 py-2.5 rounded-full text-sm font-black whitespace-nowrap transition-all border ${displayPlatform === plat ? 'bg-white text-black border-white shadow-[0_0_15px_rgba(255,255,255,0.2)]' : 'bg-[#111] text-gray-400 border-gray-800 hover:border-gray-600 hover:text-white'}`}>
+                    {plat} <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] ${displayPlatform === plat ? 'bg-black text-white' : 'bg-gray-800 text-gray-300'}`}>{Object.keys(tasksByPlatform[plat]).length} Styles</span>
+                 </button>
+              ))}
+           </div>
+        </div>
 
         {role === 'admin' && (
           <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
@@ -1163,162 +1267,130 @@ export default function App() {
 
         {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
 
-        {pendingTasks.length === 0 ? (
-          <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center"><CheckCircle size={48} className="mx-auto mb-4 text-green-500 opacity-50" /><h3 className="text-xl font-bold text-white mb-1">Queue is Empty!</h3></div>
+        {filteredPendingTasks.length === 0 ? (
+          <div className="bg-[#111] border border-gray-800 rounded-3xl p-16 text-center max-w-2xl mx-auto mt-12">
+             <CheckCircle size={64} className="mx-auto mb-6 text-green-500 opacity-50" />
+             <h3 className="text-2xl font-black text-white mb-2">Queue is Empty!</h3>
+             <p className="text-gray-500">There are no pending tasks matching your current filters.</p>
+          </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-            {sortedPlatforms.map(plat => {
-              const platformGroups = Object.values(tasksByPlatform[plat]).sort((a, b) => {
-                if (b.highestPriorityWeight !== a.highestPriorityWeight) return b.highestPriorityWeight - a.highestPriorityWeight;
-                return a.product.localeCompare(b.product);
-              });
-              
-              if (platformGroups.length === 0) return null;
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-start">
+             {activePlatformGroups.map(group => {
+                const productImage = findProductImage(group.product);
+                const isExpanded = expandedTaskGroup === group.id;
+                const urgencyClass = getUrgencyStyles(group.oldestTask);
+                
+                const priorityStyles = {
+                  '1': 'bg-red-500 text-white border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.3)]',
+                  '2': 'bg-orange-500/90 text-white border-orange-500',
+                  '3': 'bg-black/80 text-white border-gray-600',
+                  '4': 'bg-gray-800 text-gray-400 border-gray-700'
+                };
+                const pBadge = priorityStyles[group.highestPriority] || priorityStyles['3'];
+                
+                return (
+                  <div key={group.id} className={`bg-[#111] border rounded-3xl overflow-hidden flex flex-col shadow-2xl relative transition-all duration-300 ${isExpanded ? 'ring-2 ring-purple-500 scale-[1.02] z-20' : 'hover:border-gray-600 cursor-pointer'} ${urgencyClass}`} onClick={() => !isExpanded && setExpandedTaskGroup(group.id)}>
+                     
+                     <div className="w-full aspect-[4/5] relative bg-black shrink-0 border-b border-gray-800">
+                        {productImage ? (
+                           <img src={productImage} className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                        ) : (
+                           <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>
+                        )}
+                        
+                        <div className="absolute top-4 left-4 z-10">
+                           <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-xs font-black flex items-center gap-1.5 ${pBadge}`}>
+                             {group.highestPriority === '1' && <Flame size={12}/>}
+                             P{group.highestPriority} Priority
+                           </span>
+                        </div>
 
-              const isPlatExpanded = expandedPlatforms.has(plat);
-              const totalPiecesNeeded = platformGroups.reduce((sum, g) => sum + g.subTasks.length, 0);
-              
-              const platTodayPieces = todayProduction.filter(e => (e.platform || 'Shopify / Website') === plat).reduce((sum, e) => sum + Number(e.totalPieces), 0);
-              const dailyQuota = 20; 
-              const quotaProgress = Math.min(100, (platTodayPieces / dailyQuota) * 100);
+                        {group.status === 'rejected' && (
+                           <div className="absolute top-4 right-4 z-10">
+                              <span className="bg-rose-500 text-white border border-rose-400 text-xs font-black px-2 py-1 rounded-lg shadow-lg">REJECTED FIX</span>
+                           </div>
+                        )}
 
-              return (
-                <div key={plat} className="bg-[#111] border border-gray-800 rounded-3xl overflow-hidden shadow-2xl transition-all h-full">
-                  <div 
-                    className="p-5 md:p-6 cursor-pointer hover:bg-gray-800/80 transition-colors flex items-center justify-between"
-                    onClick={() => setExpandedPlatforms(prev => {
-                      const newSet = new Set(prev);
-                      newSet.has(plat) ? newSet.delete(plat) : newSet.add(plat);
-                      return newSet;
-                    })}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="relative w-14 h-14 rounded-2xl bg-purple-900/20 border border-purple-900/50 flex items-center justify-center shrink-0">
-                         <svg className="absolute inset-0 w-full h-full -rotate-90 transform" viewBox="0 0 100 100">
-                           <circle cx="50" cy="50" r="46" fill="transparent" stroke="#1f2937" strokeWidth="6" />
-                           <circle cx="50" cy="50" r="46" fill="transparent" stroke={quotaProgress >= 100 ? "#22c55e" : "#cdfc4c"} strokeWidth="6" strokeDasharray="289" strokeDashoffset={289 - (289 * quotaProgress) / 100} className="transition-all duration-1000 ease-out"/>
-                         </svg>
-                         <ShoppingBag size={20} className={quotaProgress >= 100 ? "text-green-500" : "text-purple-400"} />
-                      </div>
-                      <div>
-                        <h3 className="text-xl font-black text-white leading-tight">{plat}</h3>
-                        <div className="text-xs text-gray-400 mt-1 font-bold tracking-widest uppercase"><span className="text-white">{platformGroups.length}</span> Styles • <span className="text-rose-400">{totalPiecesNeeded}</span> Queue</div>
-                      </div>
-                    </div>
-                    <div className="w-10 h-10 rounded-full bg-black border border-gray-800 flex items-center justify-center text-gray-400 shrink-0">
-                      <ChevronDown size={20} className={`transition-transform duration-300 ${isPlatExpanded ? 'rotate-180 text-[#cdfc4c]' : ''}`} />
-                    </div>
-                  </div>
+                        <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black via-black/80 to-transparent">
+                           <h3 className="text-xl font-black text-white leading-tight line-clamp-2 drop-shadow-md">{group.product}</h3>
+                           <div className="text-sm text-purple-400 font-bold mt-1 uppercase tracking-widest">{group.subTasks.length} Pieces Pending</div>
+                        </div>
+                     </div>
 
-                  {isPlatExpanded && (
-                    <div className="p-4 pt-0 border-t border-gray-800/50 bg-[#0a0a0a]/50 h-full">
-                      <div className="space-y-4 mt-4">
-                        {platformGroups.map(group => {
-                          const productImage = findProductImage(group.product);
-                          const isExpanded = expandedTaskGroup === group.id;
-                          const urgencyClass = getUrgencyStyles(group.oldestTask);
-                          
-                          const priorityStyles = {
-                            '1': 'bg-red-500/20 text-red-500 border-red-500/50',
-                            '2': 'bg-orange-500/20 text-orange-500 border-orange-500/50',
-                            '3': 'bg-blue-500/20 text-blue-400 border-blue-500/50',
-                            '4': 'bg-gray-500/20 text-gray-400 border-gray-500/50'
-                          };
-                          const pBadge = priorityStyles[group.highestPriority] || priorityStyles['3'];
-                          
-                          return (
-                            <div key={group.id} className={`border rounded-2xl p-5 flex flex-col items-start gap-4 shadow-lg relative overflow-hidden group transition-all ${urgencyClass}`}>
-                              
-                              <div className="flex items-center w-full gap-4 cursor-pointer" onClick={() => setExpandedTaskGroup(isExpanded ? null : group.id)}>
-                                {productImage ? <img src={productImage} className="w-14 h-14 rounded-lg object-cover bg-black shrink-0" /> : <div className="w-14 h-14 rounded-lg bg-black flex items-center justify-center shrink-0"><ImageIcon className="text-gray-700"/></div>}
-                                <div className="flex-1">
-                                  <div className="text-[9px] text-gray-400 font-bold uppercase mb-1 flex flex-wrap items-center gap-2">
-                                     {group.status === 'rejected' ? <span className="text-rose-500 bg-rose-950/40 px-1 rounded">REJECTED FIX</span> : <span className="text-purple-400"><Clock size={10} className="inline mr-0.5"/> QUEUE</span>} 
-                                     <span className={`px-1.5 py-0.5 rounded border ${pBadge} font-black`}>
-                                       {group.highestPriority === '1' && <Flame size={10} className="inline mr-1 mb-0.5"/>}
-                                       P{group.highestPriority}
-                                     </span>
-                                  </div>
-                                  <h3 className="text-base font-bold text-white leading-tight">{group.product}</h3>
-                                  <div className="text-xs text-gray-500 mt-1 font-bold">{group.subTasks.length} pcs</div>
-                                </div>
-                                <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center text-gray-400 shrink-0 border border-gray-800">
-                                   <ChevronDown size={16} className={`transition-transform duration-300 ${isExpanded ? 'rotate-180 text-white' : ''}`} />
-                                </div>
+                     {isExpanded ? (
+                        <div className="p-4 bg-[#0a0a0a] flex-1 flex flex-col">
+                           <div className="flex items-center justify-between mb-4">
+                              <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces to start:</div>
+                              <div className="flex gap-2">
+                                 {role === 'admin' && (
+                                    <button onClick={(e) => { e.stopPropagation(); handleClearOutfit(group); }} className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-950/30 px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-900/50 flex items-center gap-1"><Trash2 size={12}/> Clear All</button>
+                                 )}
+                                 <button onClick={(e) => { e.stopPropagation(); setExpandedTaskGroup(null); }} className="text-[10px] text-gray-400 hover:text-white font-black uppercase tracking-widest bg-gray-800 px-3 py-1.5 rounded-lg transition-colors">Close</button>
                               </div>
+                           </div>
 
-                              {isExpanded && (
-                                <div className="w-full pt-4 border-t border-gray-800/50 mt-2 animate-in slide-in-from-top-2">
-                                  <div className="flex items-center justify-between mb-3 px-1">
-                                    <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces to start:</div>
+                           <div className="flex flex-col gap-2 w-full mb-6 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                              {group.subTasks.map(st => (
+                                <div key={st.subId} onClick={(e) => { e.stopPropagation(); toggleSubTaskSelection(st.subId); }} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-purple-900/20 border-purple-500' : 'bg-[#111] border-gray-800 hover:border-gray-600'}`}>
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-purple-500 bg-purple-500' : 'border-gray-600'}`}>
+                                      {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
+                                    </div>
+                                    <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
+                                    {st.assignee && st.assignee !== 'Any' && <span className="text-[9px] bg-purple-900/40 border border-purple-500 text-purple-300 px-1.5 py-0.5 rounded flex items-center gap-1"><UserCheck size={10}/> {st.assignee}</span>}
+                                  </div>
+                                  <div className="flex items-center gap-3">
                                     {role === 'admin' && (
-                                       <button onClick={(e) => { e.stopPropagation(); handleClearOutfit(group); }} className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-950/30 px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-900/50 flex items-center gap-1"><Trash2 size={12}/> Clear Outfit</button>
+                                      cancellingSubId === st.subId ? (
+                                        <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
+                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                          <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                          <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                          <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
+                                            <option value="Shopify / Website">Shopify</option>
+                                            <option value="Amazon">Amazon</option>
+                                            <option value="Myntra">Myntra</option>
+                                          </select>
+                                          <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
+                                            <option value="1">P1</option>
+                                            <option value="2">P2</option>
+                                            <option value="3">P3</option>
+                                            <option value="4">P4</option>
+                                          </select>
+                                          <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
+                                            <Trash2 size={16} />
+                                          </button>
+                                        </div>
+                                      )
                                     )}
                                   </div>
-                                  <div className="flex flex-col gap-2 w-full mb-6">
-                                    {group.subTasks.map(st => (
-                                      <div key={st.subId} onClick={() => toggleSubTaskSelection(st.subId)} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-purple-900/20 border-purple-500' : 'bg-black border-gray-800 hover:border-gray-600'}`}>
-                                        <div className="flex items-center gap-3">
-                                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-purple-500 bg-purple-500' : 'border-gray-600'}`}>
-                                            {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
-                                          </div>
-                                          <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
-                                          {st.assignee && st.assignee !== 'Any' && <span className="text-[9px] bg-purple-900/40 border border-purple-500 text-purple-300 px-1.5 py-0.5 rounded flex items-center gap-1"><UserCheck size={10}/> {st.assignee}</span>}
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                          {role === 'admin' && (
-                                            cancellingSubId === st.subId ? (
-                                              <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
-                                                <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
-                                                <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                                <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
-                                              </div>
-                                            ) : (
-                                              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                                <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
-                                                  <option value="Shopify / Website">Shopify</option>
-                                                  <option value="Amazon">Amazon</option>
-                                                  <option value="Myntra">Myntra</option>
-                                                </select>
-                                                <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
-                                                  <option value="1">P1</option>
-                                                  <option value="2">P2</option>
-                                                  <option value="3">P3</option>
-                                                  <option value="4">P4</option>
-                                                </select>
-                                                <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
-                                                  <Trash2 size={16} />
-                                                </button>
-                                              </div>
-                                            )
-                                          )}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-
-                                  <div className="mt-6">
-                                     {(() => {
-                                        const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
-                                        const hasSelection = selectedSubTasks.length > 0;
-                                        return (
-                                          <button disabled={!hasSelection} onClick={() => handleStartStitching(group)} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 disabled:bg-gray-800 disabled:text-gray-500 transition-all shadow-lg shadow-purple-500/20 text-lg flex items-center justify-center gap-2">
-                                            <Scissors size={20}/> {hasSelection ? `Start Stitching (${selectedSubTasks.length})` : 'Select Sizes Above'}
-                                          </button>
-                                        );
-                                     })()}
-                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                              ))}
+                           </div>
+
+                           <div className="mt-auto pt-4">
+                              {(() => {
+                                 const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
+                                 const hasSelection = selectedSubTasks.length > 0;
+                                 return (
+                                   <button disabled={!hasSelection} onClick={(e) => { e.stopPropagation(); handleStartStitching(group); }} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 disabled:bg-gray-800 disabled:text-gray-500 transition-all shadow-lg shadow-purple-500/20 text-lg flex items-center justify-center gap-2">
+                                     <Scissors size={20}/> {hasSelection ? `Start Stitching (${selectedSubTasks.length})` : 'Select Sizes'}
+                                   </button>
+                                 );
+                              })()}
+                           </div>
+                        </div>
+                     ) : (
+                        <div className="p-4 bg-[#0a0a0a] flex items-center justify-center border-t border-gray-800">
+                           <span className="text-gray-500 font-bold text-sm flex items-center gap-2 group-hover:text-white transition-colors">Tap to Open <ChevronDown size={16}/></span>
+                        </div>
+                     )}
+                  </div>
+                );
+             })}
           </div>
         )}
       </div>
