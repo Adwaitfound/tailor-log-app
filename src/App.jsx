@@ -192,7 +192,7 @@ export default function App() {
         await signInAnonymously(auth);
 
         unsubscribeLedger = onSnapshot(collection(db, 'ledger'), (snapshot) => {
-          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
           data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setEntries(data);
           setLoading(false);
@@ -215,7 +215,7 @@ export default function App() {
           const blacklist = getBlacklist();
           // THE INTERCEPTOR: Filters out any ID that is on your browser's local blacklist
           const data = snapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .map(doc => ({ ...doc.data(), id: doc.id }))
             .filter(t => !blacklist.includes(t.id));
           
           const activeTasks = data.filter(t => 
