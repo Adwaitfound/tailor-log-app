@@ -120,8 +120,9 @@ export default function App() {
     return found ? found.image : null;
   };
 
+  // 🌟 NEW: Highly efficient image compressor to stop Firebase memory crashes
   const compressImageToBase64 = (file) => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = (event) => {
@@ -129,15 +130,18 @@ export default function App() {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 1200; 
-          const scaleSize = MAX_WIDTH / img.width;
-          canvas.width = MAX_WIDTH;
+          const MAX_WIDTH = 800; // Drastically reduced for performance
+          const scaleSize = img.width > MAX_WIDTH ? (MAX_WIDTH / img.width) : 1;
+          canvas.width = img.width * scaleSize;
           canvas.height = img.height * scaleSize;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85)); 
+          // Compress quality to 60% to save payload size
+          resolve(canvas.toDataURL('image/jpeg', 0.6)); 
         };
+        img.onerror = (e) => reject("Image processing error");
       };
+      reader.onerror = (e) => reject("File reading error");
     });
   };
 
@@ -306,24 +310,34 @@ export default function App() {
     }
   };
 
+  // 🌟 NEW: Safer Webcam snapshot process
   const takePhoto = () => {
     if (videoRef.current && photoCanvasRef.current) {
       const video = videoRef.current;
       const canvas = photoCanvasRef.current;
+      
+      // Ensure video is properly loaded before drawing
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+         showToast("Camera initializing, please try again.", "error");
+         return;
+      }
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const MAX_WIDTH = 1200; 
-      const scaleSize = MAX_WIDTH / video.videoWidth;
+      const MAX_WIDTH = 800; // Compress directly from the lens
+      const scaleSize = video.videoWidth > MAX_WIDTH ? (MAX_WIDTH / video.videoWidth) : 1;
+      
       const compressedCanvas = document.createElement('canvas');
-      compressedCanvas.width = MAX_WIDTH;
+      compressedCanvas.width = video.videoWidth * scaleSize;
       compressedCanvas.height = video.videoHeight * scaleSize;
       const compCtx = compressedCanvas.getContext('2d');
       compCtx.drawImage(canvas, 0, 0, compressedCanvas.width, compressedCanvas.height);
       
-      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85);
+      // Extremely compressed payload size
+      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.6);
       setImagePreview(base64);
       setImageFile('WEBCAM'); 
       stopCamera();
@@ -362,16 +376,13 @@ export default function App() {
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
     
-    // 🌟 BULLETPROOF PARSER: Splits string exactly at "http" to grab the URL perfectly
     const newProducts = setupForm.productsText.split('\n').map(line => {
       let name = '';
       let image = null;
       
       const httpIndex = line.toLowerCase().indexOf('http');
       if (httpIndex !== -1) {
-        // Everything from 'http' to the end is the image link
         image = line.substring(httpIndex).trim();
-        // Everything before 'http' is the name (we clean off colons and spaces)
         name = line.substring(0, httpIndex).replace(/[\t,:\-\s]+$/, '').trim();
       } else {
         const parts = line.split(/[\t,]/);
@@ -488,13 +499,11 @@ export default function App() {
   const handleProdSubmit = async (e) => {
     e.preventDefault();
     
-    // EXPLICIT ERROR MESSAGES
     if (!prodForm.tailor) return showToast("Missing: Please select a Tailor.", "error");
     if (!prodForm.product) return showToast("Missing: Please select a Product.", "error");
 
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
     if (totalPieces === 0) return showToast("Missing: Enter at least 1 piece in the sizes section.", "error");
-    
     if (!imagePreview) return showToast("Missing: Please attach a QC Photo!", "error");
 
     setIsUploading(true);
@@ -543,7 +552,6 @@ export default function App() {
     }
   };
 
-  // --- CORE SYSTEM HANDLERS ---
   const handlePaySubmit = async (e) => {
     e.preventDefault();
     if (!payForm.tailor || !payForm.amount) return showToast("Missing fields", "error");
@@ -660,14 +668,20 @@ export default function App() {
     showToast("Item dropped back to queue.");
   };
 
-  const handleCompleteLiveSelection = async (tailorName, items) => {
+  const handleCompleteLiveSelection = async (e, tailorName, items) => {
+    e.preventDefault();
+    e.stopPropagation();
     const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0 || !imagePreview) return;
     setIsUploading(true);
+    
     try {
       let finalImageData = null;
-      if (imageFile === 'WEBCAM') finalImageData = imagePreview;
-      else if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
+      if (imageFile === 'WEBCAM') {
+          finalImageData = imagePreview;
+      } else if (imageFile && !useLocalMode) {
+          finalImageData = await compressImageToBase64(imageFile);
+      }
 
       // Group selected items by Product Name
       const groupedByProduct = selected.reduce((acc, st) => {
@@ -692,12 +706,11 @@ export default function App() {
             type: 'production',
             totalPieces: productTasks.length,
             amount: productTasks.length * (firstItem.pieceRate || 250),
-            imageUrl: finalImageData, // Share the same QC photo
+            imageUrl: finalImageData, // Share the same compressed QC photo
             qcStatus: 'pending',
             timestamp: new Date().toISOString()
           };
           
-          // Calculate sizes just for this product group
           productTasks.forEach(st => {
             if(!entryData.sizes[st.size]) entryData.sizes[st.size] = 0;
             entryData.sizes[st.size] += 1;
@@ -706,7 +719,6 @@ export default function App() {
           await addDoc(collection(db, 'ledger'), entryData);
         }
 
-        // Mark all individual tasks as completed
         for (const st of selected) {
           await updateDoc(doc(db, 'priority_tasks', st.id), { status: 'completed' });
         }
@@ -744,9 +756,9 @@ export default function App() {
       setImagePreview(null);
       showToast("Stitching completed and logged!");
       if (role === 'staff') setActiveTab('tasks');
-    } catch(e) {
-      console.error(e);
-      showToast("Failed to complete items.", "error");
+    } catch(err) {
+      console.error(err);
+      showToast(`Error saving task: ${err.message || "Failed"}`, "error");
     }
     setIsUploading(false);
   };
@@ -1124,7 +1136,7 @@ export default function App() {
                             const hasSelection = selectedSubTasks.length > 0;
                             const canSubmit = hasSelection && imagePreview;
                             return (
-                              <button disabled={isUploading || !canSubmit} onClick={() => handleCompleteLiveSelection(tailorName, items)} className="w-full py-5 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-xl">
+                              <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className="w-full py-5 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-xl">
                                 {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!imagePreview ? 'Add QC Photo to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
                               </button>
                             );
