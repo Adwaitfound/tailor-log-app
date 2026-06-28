@@ -70,6 +70,7 @@ export default function App() {
   const [expandedTaskGroup, setExpandedTaskGroup] = useState(null);
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
+  const [taskProductSearch, setTaskProductSearch] = useState(''); // Search for Admin Assign Task Dropdown
   const [taskFilterOption, setTaskFilterOption] = useState('All');
   const [activeTaskPlatform, setActiveTaskPlatform] = useState('Shopify / Website');
 
@@ -89,6 +90,56 @@ export default function App() {
   const videoRef = useRef(null);
   const photoCanvasRef = useRef(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+
+  // 🌟 AGGRESSIVE CLEANER: Bruteforce chops off any URL hiding in the name
+  const formatProductName = (name) => {
+    if (!name) return 'Unnamed Item';
+    let cleanName = String(name);
+    const httpIndex = cleanName.toLowerCase().indexOf('http');
+    if (httpIndex !== -1) {
+        cleanName = cleanName.substring(0, httpIndex);
+    }
+    return cleanName.replace(/[\t,:\-\s]+$/, '').trim();
+  };
+
+  // Smart fuzzy matching for images (ignores case, trailing spaces, and URLs)
+  const findProductImage = (productName) => {
+    if (!productName || !products) return null;
+    const cleanSearch = formatProductName(productName).toLowerCase().replace(/\s+/g, ' ');
+    
+    // First try: Match exact cleaned name
+    let found = products.find(p => formatProductName(p.name).toLowerCase().replace(/\s+/g, ' ') === cleanSearch);
+    
+    // Second try: Substring match just in case
+    if (!found) {
+        found = products.find(p => {
+           const pName = formatProductName(p.name).toLowerCase().replace(/\s+/g, ' ');
+           return pName.includes(cleanSearch) || cleanSearch.includes(pName);
+        });
+    }
+    return found ? found.image : null;
+  };
+
+  const compressImageToBase64 = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 1200; 
+          const scaleSize = MAX_WIDTH / img.width;
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * scaleSize;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85)); 
+        };
+      };
+    });
+  };
 
   const getPayCycleDates = (offsetWeeks = 0) => {
     const today = new Date();
@@ -308,40 +359,27 @@ export default function App() {
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
   const syncLocal = (key, data) => localStorage.setItem(key, JSON.stringify(data));
 
-  const compressImageToBase64 = (file) => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target.result;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 1200; 
-          const scaleSize = MAX_WIDTH / img.width;
-          canvas.width = MAX_WIDTH;
-          canvas.height = img.height * scaleSize;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85)); 
-        };
-      };
-    });
-  };
-
-  // Smart fuzzy matching for images (ignores case and ALL trailing spaces)
-  const findProductImage = (productName) => {
-    if (!productName || !products) return null;
-    const cleanSearch = productName.trim().toLowerCase().replace(/\s+/g, ' ');
-    const found = products.find(p => p.name.trim().toLowerCase().replace(/\s+/g, ' ') === cleanSearch);
-    return found ? found.image : null;
-  };
-
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
+    
+    // 🌟 BULLETPROOF PARSER: Splits string exactly at "http" to grab the URL perfectly
     const newProducts = setupForm.productsText.split('\n').map(line => {
-      const parts = line.split(/[\t,]/);
-      return { name: parts[0]?.trim() || '', image: parts[1]?.trim() || null };
+      let name = '';
+      let image = null;
+      
+      const httpIndex = line.toLowerCase().indexOf('http');
+      if (httpIndex !== -1) {
+        // Everything from 'http' to the end is the image link
+        image = line.substring(httpIndex).trim();
+        // Everything before 'http' is the name (we clean off colons and spaces)
+        name = line.substring(0, httpIndex).replace(/[\t,:\-\s]+$/, '').trim();
+      } else {
+        const parts = line.split(/[\t,]/);
+        name = parts[0]?.trim() || '';
+        image = parts[1]?.trim() || null;
+      }
+      
+      return { name, image };
     }).filter(p => p.name);
 
     try {
@@ -371,7 +409,7 @@ export default function App() {
       csvContent = "Date,Tailor,Transaction Type,Platform,Product,Quantity,Rate,Credit (Earned),Debit (Paid),Notes\n";
       filtered.forEach(e => {
         const type = e.type === 'production' ? 'Production' : 'Payment'; 
-        const product = e.product ? `"${e.product}"` : ''; 
+        const product = e.product ? `"${formatProductName(e.product)}"` : ''; 
         const qty = e.totalPieces || ''; 
         const rate = e.pieceRate || '';
         const platform = e.platform || 'Shopify / Website';
@@ -396,8 +434,9 @@ export default function App() {
       const productStats = {};
       filtered.filter(e => e.type === 'production').forEach(e => {
         const plat = e.platform || 'Shopify / Website';
-        const key = `${e.product}-${plat}`;
-        if (!productStats[key]) productStats[key] = { product: e.product, platform: plat, pieces: 0, value: 0 };
+        const safeProduct = formatProductName(e.product);
+        const key = `${safeProduct}-${plat}`;
+        if (!productStats[key]) productStats[key] = { product: safeProduct, platform: plat, pieces: 0, value: 0 };
         productStats[key].pieces += Number(e.totalPieces); 
         productStats[key].value += Number(e.amount);
       });
@@ -473,6 +512,7 @@ export default function App() {
 
       const entryData = {
         ...prodForm,
+        product: formatProductName(prodForm.product),
         type: 'production',
         totalPieces,
         amount: totalPieces * prodForm.pieceRate,
@@ -546,7 +586,7 @@ export default function App() {
       setProdForm({
         date: entry.date || new Date().toISOString().split('T')[0],
         tailor: entry.tailor || '',
-        product: entry.product || '',
+        product: formatProductName(entry.product),
         sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 },
         pieceRate: entry.pieceRate || 250,
         platform: entry.platform || 'Shopify / Website'
@@ -620,7 +660,6 @@ export default function App() {
     showToast("Item dropped back to queue.");
   };
 
-  // ✅ Fixed Grouping Logic for Multiple Products
   const handleCompleteLiveSelection = async (tailorName, items) => {
     const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0 || !imagePreview) return;
@@ -632,7 +671,7 @@ export default function App() {
 
       // Group selected items by Product Name
       const groupedByProduct = selected.reduce((acc, st) => {
-        const prodName = st.product || 'Unnamed Item';
+        const prodName = formatProductName(st.product || 'Unnamed Item');
         if (!acc[prodName]) acc[prodName] = [];
         acc[prodName].push(st);
         return acc;
@@ -717,9 +756,14 @@ export default function App() {
     if (selected.length === 0) return;
     if (!useLocalMode) {
       for (const st of selected) {
+        let assignedTailor = prodForm.tailor;
+        if (role === 'admin' && st.assignee && st.assignee !== 'Any') {
+           assignedTailor = st.assignee;
+        }
+        
         await updateDoc(doc(db, 'priority_tasks', st.id), { 
           status: 'in_progress', 
-          startedBy: prodForm.tailor || 'Unknown', 
+          startedBy: assignedTailor || 'Unknown', 
           startedAt: new Date().toISOString() 
         });
       }
@@ -811,15 +855,16 @@ export default function App() {
   const groupedByProduct = useMemo(() => {
     const groups = {};
     finalLedgerEntries.filter(e => e.type === 'production' && e.qcStatus !== 'rejected').forEach(e => {
-      if (!groups[e.product]) groups[e.product] = { pieces: 0, value: 0, sizes: {} };
-      groups[e.product].pieces += Number(e.totalPieces) || 0;
-      groups[e.product].value += Number(e.amount) || 0;
+      const safeProduct = formatProductName(e.product);
+      if (!groups[safeProduct]) groups[safeProduct] = { pieces: 0, value: 0, sizes: {} };
+      groups[safeProduct].pieces += Number(e.totalPieces) || 0;
+      groups[safeProduct].value += Number(e.amount) || 0;
       if(e.sizes) {
          Object.entries(e.sizes).forEach(([s, q]) => {
             const numQ = Number(q) || 0;
             if (numQ > 0) {
-               if(!groups[e.product].sizes[s]) groups[e.product].sizes[s] = 0;
-               groups[e.product].sizes[s] += numQ;
+               if(!groups[safeProduct].sizes[s]) groups[safeProduct].sizes[s] = 0;
+               groups[safeProduct].sizes[s] += numQ;
             }
          });
       }
@@ -957,13 +1002,25 @@ export default function App() {
         
         {/* KIOSK HEADER */}
         <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 mb-8 relative ${isFullscreen ? 'p-6 bg-[#111] border-b border-gray-800 sticky top-0 z-40 shadow-xl' : 'px-4'}`}>
-           <div className="text-left flex-1 w-full">
-             <h2 className={`font-black tracking-tight text-white flex items-center justify-center sm:justify-start gap-3 ${isFullscreen ? 'text-4xl md:text-5xl' : 'text-3xl'}`}>
-               <Activity size={isFullscreen ? 36 : 28} className="text-purple-500"/> Live Floor
-             </h2>
-             <p className="text-gray-400 mt-2 text-center sm:text-left text-sm md:text-lg">Factory Production Dashboard</p>
+           <div className="text-left flex-1 w-full flex flex-col sm:flex-row items-start sm:items-center gap-4">
+             <div>
+               <h2 className={`font-black tracking-tight text-white flex items-center justify-center sm:justify-start gap-3 ${isFullscreen ? 'text-4xl md:text-5xl' : 'text-3xl'}`}>
+                 <Activity size={isFullscreen ? 36 : 28} className="text-purple-500"/> Live Floor
+               </h2>
+               <p className="text-gray-400 mt-2 text-center sm:text-left text-sm md:text-lg">Factory Production Dashboard</p>
+             </div>
+             
+             {role === 'admin' && (
+               <div className="relative mt-2 sm:mt-0 sm:ml-6" title="Complete tasks as this tailor">
+                 <User size={16} className="absolute left-3 top-3.5 text-purple-400"/>
+                 <select value={prodForm.tailor} onChange={(e) => setProdForm({...prodForm, tailor: e.target.value})} className="w-full sm:w-auto pl-10 pr-8 py-3 bg-purple-900/20 border border-purple-500/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-purple-300 font-bold cursor-pointer">
+                   {tailors.map(t => <option key={t} value={t} className="bg-[#111] text-white">Completing As: {t}</option>)}
+                 </select>
+                 <ChevronDown size={14} className="absolute right-3 top-4 text-purple-400 pointer-events-none"/>
+               </div>
+             )}
            </div>
-           <button onClick={toggleFullScreen} className={`flex items-center justify-center gap-2 bg-purple-900/40 hover:bg-purple-500 border border-purple-500/50 hover:text-white px-5 py-3 rounded-xl text-sm font-bold transition-all shadow-lg w-full sm:w-auto ${isFullscreen ? 'text-white bg-purple-600' : 'text-purple-300'}`}>
+           <button onClick={toggleFullScreen} className={`flex items-center justify-center gap-2 bg-purple-900/40 hover:bg-purple-500 border border-purple-500/50 hover:text-white px-5 py-3 rounded-xl text-sm font-bold transition-all shadow-lg w-full sm:w-auto shrink-0 ${isFullscreen ? 'text-white bg-purple-600' : 'text-purple-300'}`}>
              {isFullscreen ? <><Minimize size={18}/> Exit Kiosk Mode</> : <><Maximize size={18}/> Enter Kiosk Mode</>}
            </button>
         </div>
@@ -1036,7 +1093,7 @@ export default function App() {
                                         <span className="text-[10px] text-purple-200 font-bold uppercase tracking-widest">{startTime}</span>
                                       </div>
                                       <div className={`font-black text-lg leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
-                                         {st.product}
+                                         {formatProductName(st.product)}
                                       </div>
                                     </div>
                                  </div>
@@ -1096,7 +1153,6 @@ export default function App() {
         return '3';
     };
 
-    // 🛡️ DUP-KEY FIX: Safely strip 'id' from copied item so Firebase assigns a new unique one
     const updateTaskField = async (taskId, field, newValue) => {
         if(useLocalMode) return;
         const originalTask = tasks.find(t => t.id === taskId);
@@ -1123,7 +1179,7 @@ export default function App() {
       const taskAssignee = t.assignee || 'Any';
       if (taskFilterOption === 'Mine' && taskAssignee !== prodForm.tailor && role !== 'admin') return false;
       
-      if (taskSearchQuery && !(t.product || '').toLowerCase().includes(String(taskSearchQuery).toLowerCase())) return false;
+      if (taskSearchQuery && !formatProductName(t.product).toLowerCase().includes(String(taskSearchQuery).toLowerCase())) return false;
       
       return true;
     });
@@ -1132,7 +1188,7 @@ export default function App() {
     const tasksByPlatform = filteredPendingTasks.reduce((acc, t) => {
       const plat = t.platform || 'Shopify / Website';
       const taskPriority = getNormalizedPriority(t.priority);
-      const safeProduct = t.product || 'Unnamed Item';
+      const safeProduct = formatProductName(t.product);
       
       if (!acc[plat]) acc[plat] = {};
       
@@ -1198,6 +1254,15 @@ export default function App() {
               </div>
 
               <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                 {role === 'admin' && (
+                   <div className="relative" title="Actioning As (Who gets 'Any' tasks)">
+                     <User size={16} className="absolute left-3 top-3 text-purple-400"/>
+                     <select value={prodForm.tailor} onChange={(e) => setProdForm({...prodForm, tailor: e.target.value})} className="w-full sm:w-auto pl-10 pr-8 py-2 bg-purple-900/20 border border-purple-500/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-purple-300 font-bold cursor-pointer">
+                       {tailors.map(t => <option key={t} value={t} className="bg-[#111] text-white">Floor: {t}</option>)}
+                     </select>
+                     <ChevronDown size={14} className="absolute right-3 top-3.5 text-purple-400 pointer-events-none"/>
+                   </div>
+                 )}
                  <div className="relative w-full sm:w-64">
                    <Search size={16} className="absolute left-3 top-3 text-gray-500"/>
                    <input type="text" value={taskSearchQuery} onChange={(e) => setTaskSearchQuery(e.target.value)} placeholder="Search styles..." className="w-full pl-10 pr-4 py-2 bg-[#111] border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-rose-500 outline-none text-white"/>
@@ -1235,7 +1300,23 @@ export default function App() {
                   <span className="truncate">{taskForm.product || "Select Product..."}</span><ChevronDown size={14}/>
                 </div>
                 {isTaskProductDropdownOpen && (
-                  <><div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar overflow-hidden">{products.map((p, i) => (<div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50" onClick={() => { setTaskForm({...taskForm, product: p.name}); setIsTaskProductDropdownOpen(false); }}>{p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center"><ImageIcon size={12} className="text-gray-600" /></div>}<span className="text-xs font-medium text-gray-200 truncate">{p.name}</span></div>))}</div></>
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setIsTaskProductDropdownOpen(false)} />
+                    <div className="absolute z-50 w-full mt-1 bg-[#111] border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden">
+                      <div className="p-2 border-b border-gray-800 bg-[#0a0a0a] relative">
+                        <Search size={14} className="absolute left-4 top-4 text-gray-500" />
+                        <input autoFocus type="text" placeholder="Search products..." value={taskProductSearch} onChange={(e) => setTaskProductSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto custom-scrollbar flex-1">
+                        {products.filter(p => formatProductName(p.name).toLowerCase().includes(taskProductSearch.toLowerCase())).map((p, i) => (
+                          <div key={i} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-800 cursor-pointer border-b border-gray-800/50 last:border-0" onClick={() => { setTaskForm({...taskForm, product: formatProductName(p.name)}); setIsTaskProductDropdownOpen(false); setTaskProductSearch(''); }}>
+                            {p.image ? <img src={p.image} className="w-6 h-6 rounded-md object-cover bg-black shrink-0" /> : <div className="w-6 h-6 rounded-md bg-black flex items-center justify-center shrink-0"><ImageIcon size={12} className="text-gray-600" /></div>}
+                            <span className="text-xs font-medium text-gray-200 truncate">{formatProductName(p.name)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
               <select value={taskForm.platform} onChange={(e) => setTaskForm({...taskForm, platform: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
@@ -1258,7 +1339,7 @@ export default function App() {
               <div className="relative"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
               <button onClick={() => {
                 if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
-                addDoc(collection(db, 'priority_tasks'), { product: taskForm.product, size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, priority: taskForm.priority, status: 'pending', createdAt: new Date().toISOString() });
+                addDoc(collection(db, 'priority_tasks'), { product: formatProductName(taskForm.product), size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, priority: taskForm.priority, status: 'pending', createdAt: new Date().toISOString() });
                 setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' }); showToast("Task Assigned!");
               }} className="col-span-2 lg:col-span-1 bg-[#cdfc4c] text-black font-black text-sm rounded-lg py-2 hover:bg-[#b5e638]">Add</button>
             </div>
@@ -1429,13 +1510,13 @@ export default function App() {
               <div className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none cursor-pointer flex items-center justify-between transition-colors hover:border-gray-600" onClick={() => setIsProductDropdownOpen(!isProductDropdownOpen)}>
                 <div className="flex items-center gap-3 overflow-hidden">
                   {currentSelectedProductImage ? <img src={currentSelectedProductImage} alt="Preview" className="w-8 h-8 rounded-md object-cover border border-gray-800 bg-[#111] shrink-0" /> : <div className="w-8 h-8 rounded-md bg-[#111] border border-gray-800 flex items-center justify-center shrink-0"><ImageIcon size={16} className="text-gray-600" /></div>}
-                  <span className={`truncate font-medium ${prodForm.product ? 'text-white' : 'text-gray-500'}`}>{prodForm.product || "Select Product"}</span>
+                  <span className={`truncate font-medium ${prodForm.product ? 'text-white' : 'text-gray-500'}`}>{formatProductName(prodForm.product) || "Select Product"}</span>
                 </div>
                 <ChevronDown size={18} className={`text-gray-500 transition-transform duration-200 ${isProductDropdownOpen ? 'rotate-180' : ''}`} />
               </div>
 
               {isProductDropdownOpen && (
-                <><div className="fixed inset-0 z-40" onClick={() => setIsProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-2 bg-[#111] border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden"><div className="p-3 border-b border-gray-800 bg-[#0a0a0a] relative"><Search size={16} className="absolute left-6 top-6 text-gray-500" /><input autoFocus type="text" placeholder="Search products..." value={productSearch} onChange={(e) => setProductSearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-black border border-gray-800 rounded-lg text-sm text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"/></div><div className="max-h-72 overflow-y-auto custom-scrollbar flex-1">{products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase())).map((p, i) => (<div key={i} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800 cursor-pointer transition-colors border-b border-gray-800/50 last:border-0" onClick={() => { setProdForm({...prodForm, product: p.name}); setIsProductDropdownOpen(false); setProductSearch(''); }}>{p.image ? <img src={p.image} alt={p.name} className="w-10 h-10 rounded-md object-cover border border-gray-800 bg-black shrink-0" /> : <div className="w-10 h-10 rounded-md bg-black border border-gray-800 flex items-center justify-center shrink-0"><ImageIcon size={16} className="text-gray-600" /></div>}<span className="text-sm font-medium text-gray-200 hover:text-white">{p.name}</span></div>))}</div></div></>
+                <><div className="fixed inset-0 z-40" onClick={() => setIsProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-2 bg-[#111] border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden"><div className="p-3 border-b border-gray-800 bg-[#0a0a0a] relative"><Search size={16} className="absolute left-6 top-6 text-gray-500" /><input autoFocus type="text" placeholder="Search products..." value={productSearch} onChange={(e) => setProductSearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-black border border-gray-800 rounded-lg text-sm text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"/></div><div className="max-h-72 overflow-y-auto custom-scrollbar flex-1">{products.filter(p => formatProductName(p.name).toLowerCase().includes(productSearch.toLowerCase())).map((p, i) => (<div key={i} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800 cursor-pointer transition-colors border-b border-gray-800/50 last:border-0" onClick={() => { setProdForm({...prodForm, product: formatProductName(p.name)}); setIsProductDropdownOpen(false); setProductSearch(''); }}>{p.image ? <img src={p.image} alt={p.name} className="w-10 h-10 rounded-md object-cover border border-gray-800 bg-black shrink-0" /> : <div className="w-10 h-10 rounded-md bg-black border border-gray-800 flex items-center justify-center shrink-0"><ImageIcon size={16} className="text-gray-600" /></div>}<span className="text-sm font-medium text-gray-200 hover:text-white">{formatProductName(p.name)}</span></div>))}</div></div></>
               )}
             </div>
           </div>
@@ -1605,7 +1686,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-gray-800/50">
                   {finalLedgerEntries.map((entry) => {
-                    const entryImage = products.find(p => p.name === entry.product)?.image;
+                    const entryImage = findProductImage(entry.product);
                     return (
                     <tr key={entry.id} className={`hover:bg-gray-800/30 transition-colors group ${entry.qcStatus === 'rejected' ? 'opacity-50 bg-rose-900/10' : ''}`}>
                       <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
@@ -1619,7 +1700,7 @@ export default function App() {
                                <div className="w-10 h-10 rounded-lg bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>
                              )}
                              <div>
-                               <div className="text-white font-bold">{entry.product}</div>
+                               <div className="text-white font-bold">{formatProductName(entry.product)}</div>
                                <div className="flex flex-wrap items-center gap-2 mt-1">
                                  <div className="text-xs text-gray-500">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</div>
                                  <div className="text-[10px] bg-gray-800 text-gray-300 px-2 py-0.5 rounded font-bold uppercase tracking-widest">
@@ -1637,7 +1718,7 @@ export default function App() {
                       </td>
                       <td className="px-6 py-4 text-center">
                          {entry.imageUrl ? (
-                           <button onClick={() => setLightboxData({ url: entry.imageUrl, timestamp: entry.timestamp, tailor: entry.tailor, product: entry.product })} className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 px-3 py-1.5 rounded-full hover:bg-blue-400 hover:text-white transition-colors border border-blue-900/50"><Camera size={12}/> View</button>
+                           <button onClick={() => setLightboxData({ url: entry.imageUrl, timestamp: entry.timestamp, tailor: entry.tailor, product: formatProductName(entry.product) })} className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 px-3 py-1.5 rounded-full hover:bg-blue-400 hover:text-white transition-colors border border-blue-900/50"><Camera size={12}/> View</button>
                          ) : <span className="text-gray-700 font-bold text-xs">-</span>}
                       </td>
                       <td className="px-6 py-4 text-right font-bold text-white">{entry.type === 'production' ? <span className={entry.qcStatus === 'rejected' ? 'line-through text-gray-600' : 'text-[#cdfc4c]'}>₹{entry.amount.toLocaleString()}</span> : '-'}</td>
@@ -1685,14 +1766,14 @@ export default function App() {
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {groupedByProduct.map((prod, i) => {
-                  const entryImage = products.find(p => p.name === prod.name)?.image;
+                  const entryImage = findProductImage(prod.name);
                   return (
                   <tr key={i} className="hover:bg-gray-800/30 transition-colors">
                     <td className="px-6 py-4">
                        <div className="flex items-center gap-4">
                           {entryImage ? <img src={entryImage} className="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-black shrink-0" /> : <div className="w-12 h-12 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={20} className="text-gray-600" /></div>}
                           <div>
-                            <div className="font-bold text-white text-base">{prod.name}</div>
+                            <div className="font-bold text-white text-base">{formatProductName(prod.name)}</div>
                             <div className="text-xs text-gray-500 mt-1 uppercase tracking-widest font-bold">Sizes combined: <span className="text-gray-300">{Object.entries(prod.sizes).map(([s, q]) => `${s}:${q}`).join(', ')}</span></div>
                           </div>
                        </div>
@@ -1899,7 +1980,7 @@ export default function App() {
                     <tr key={log.id}>
                       <td className="py-3 pr-2">
                         <div className="text-[9px] text-gray-400 mb-0.5">{log.date}</div>
-                        <div className="font-bold text-gray-900 font-sans text-sm leading-tight">{log.product}</div>
+                        <div className="font-bold text-gray-900 font-sans text-sm leading-tight">{formatProductName(log.product)}</div>
                         <div className="text-[9px] text-gray-500 mt-1 uppercase tracking-widest flex items-center gap-2">
                           {log.platform || 'Shopify / Website'} | Sizes: {formatSizes(log.sizes)}
                           {log.qcStatus === 'rejected' && <span className="text-rose-500 font-black bg-rose-100 px-1 rounded">REJECTED</span>}
