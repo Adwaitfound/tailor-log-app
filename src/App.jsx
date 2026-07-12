@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter, BarChart3, TrendingUp, AlertTriangle
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter, BarChart3, TrendingUp, AlertTriangle, Calendar
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -70,7 +70,7 @@ export default function App() {
   const [expandedTaskGroup, setExpandedTaskGroup] = useState(null);
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
-  const [taskProductSearch, setTaskProductSearch] = useState(''); // Search for Admin Assign Task Dropdown
+  const [taskProductSearch, setTaskProductSearch] = useState('');
   const [taskFilterOption, setTaskFilterOption] = useState('All');
   const [expandedPlatforms, setExpandedPlatforms] = useState({});
 
@@ -91,38 +91,30 @@ export default function App() {
   const photoCanvasRef = useRef(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
-  // 🌟 AGGRESSIVE CLEANER: Bruteforce chops off any URL hiding in the name
+  // 🌟 UNIVERSAL CLEANER: Strips accidental URLs out of old saved names
   const formatProductName = (name) => {
     if (!name) return 'Unnamed Item';
-    let cleanName = String(name);
-    const httpIndex = cleanName.toLowerCase().indexOf('http');
-    if (httpIndex !== -1) {
-        cleanName = cleanName.substring(0, httpIndex);
-    }
-    return cleanName.replace(/[\t,:\-\s]+$/, '').trim();
+    return String(name).replace(/(https?:\/\/[^\s]+)/g, '').replace(/[\t,:\-\s]+$/, '').trim();
   };
 
-  // Smart fuzzy matching for images (ignores case, trailing spaces, and URLs)
+  // Smart fuzzy matching for images (ignores case and ALL trailing spaces)
   const findProductImage = (productName) => {
     if (!productName || !products) return null;
-    const cleanSearch = formatProductName(productName).toLowerCase().replace(/\s+/g, ' ');
+    const cleanName = formatProductName(productName);
+    const cleanSearch = cleanName.toLowerCase().replace(/\s+/g, ' ');
+    const found = products.find(p => p.name.trim().toLowerCase().replace(/\s+/g, ' ') === cleanSearch);
     
-    // First try: Match exact cleaned name
-    let found = products.find(p => formatProductName(p.name).toLowerCase().replace(/\s+/g, ' ') === cleanSearch);
-    
-    // Second try: Substring match just in case
+    // Fallback just in case the name in config actually includes the URL
     if (!found) {
-        found = products.find(p => {
-           const pName = formatProductName(p.name).toLowerCase().replace(/\s+/g, ' ');
-           return pName.includes(cleanSearch) || cleanSearch.includes(pName);
-        });
+        const fallback = products.find(p => p.name.trim().toLowerCase().replace(/\s+/g, ' ') === productName.trim().toLowerCase().replace(/\s+/g, ' '));
+        return fallback ? fallback.image : null;
     }
+    
     return found ? found.image : null;
   };
 
-  // 🌟 NEW: Highly efficient image compressor to stop Firebase memory crashes
   const compressImageToBase64 = (file) => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = (event) => {
@@ -130,18 +122,15 @@ export default function App() {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800; // Drastically reduced for performance
-          const scaleSize = img.width > MAX_WIDTH ? (MAX_WIDTH / img.width) : 1;
-          canvas.width = img.width * scaleSize;
+          const MAX_WIDTH = 1200; 
+          const scaleSize = MAX_WIDTH / img.width;
+          canvas.width = MAX_WIDTH;
           canvas.height = img.height * scaleSize;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          // Compress quality to 60% to save payload size
-          resolve(canvas.toDataURL('image/jpeg', 0.6)); 
+          resolve(canvas.toDataURL('image/jpeg', 0.85)); 
         };
-        img.onerror = (e) => reject("Image processing error");
       };
-      reader.onerror = (e) => reject("File reading error");
     });
   };
 
@@ -172,6 +161,7 @@ export default function App() {
   const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
   const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
   const [statsTimeFilter, setStatsTimeFilter] = useState('30days');
+  const [ledgerSearch, setLedgerSearch] = useState('');
 
   const [signOffStartDate, setSignOffStartDate] = useState(currentCycle.start);
   const [signOffEndDate, setSignOffEndDate] = useState(currentCycle.end);
@@ -269,7 +259,6 @@ export default function App() {
 
         unsubscribeTasks = onSnapshot(collection(db, 'priority_tasks'), (snapshot) => {
           const blacklist = getBlacklist();
-          // THE INTERCEPTOR: Filters out any ID that is on your browser's local blacklist
           const data = snapshot.docs
             .map(doc => ({ ...doc.data(), id: doc.id }))
             .filter(t => !blacklist.includes(t.id));
@@ -336,34 +325,24 @@ export default function App() {
     }
   };
 
-  // 🌟 NEW: Safer Webcam snapshot process
   const takePhoto = () => {
     if (videoRef.current && photoCanvasRef.current) {
       const video = videoRef.current;
       const canvas = photoCanvasRef.current;
-      
-      // Ensure video is properly loaded before drawing
-      if (video.videoWidth === 0 || video.videoHeight === 0) {
-         showToast("Camera initializing, please try again.", "error");
-         return;
-      }
-
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const MAX_WIDTH = 800; // Compress directly from the lens
-      const scaleSize = video.videoWidth > MAX_WIDTH ? (MAX_WIDTH / video.videoWidth) : 1;
-      
+      const MAX_WIDTH = 1200; 
+      const scaleSize = MAX_WIDTH / video.videoWidth;
       const compressedCanvas = document.createElement('canvas');
-      compressedCanvas.width = video.videoWidth * scaleSize;
+      compressedCanvas.width = MAX_WIDTH;
       compressedCanvas.height = video.videoHeight * scaleSize;
       const compCtx = compressedCanvas.getContext('2d');
       compCtx.drawImage(canvas, 0, 0, compressedCanvas.width, compressedCanvas.height);
       
-      // Extremely compressed payload size
-      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.6);
+      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85);
       setImagePreview(base64);
       setImageFile('WEBCAM'); 
       stopCamera();
@@ -402,17 +381,15 @@ export default function App() {
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
     
-    // 🌟 BULLETPROOF PARSER: Splits string exactly at "http" to grab the URL perfectly
+    // 🌟 UPGRADED SMART PARSER: Automatically detects URLs no matter how you format the text
     const newProducts = setupForm.productsText.split('\n').map(line => {
       let name = '';
       let image = null;
       
-      const httpIndex = line.toLowerCase().indexOf('http');
-      if (httpIndex !== -1) {
-        // Everything from 'http' to the end is the image link
-        image = line.substring(httpIndex).trim();
-        // Everything before 'http' is the name (we clean off colons and spaces)
-        name = line.substring(0, httpIndex).replace(/[\t,:\-\s]+$/, '').trim();
+      const urlMatch = line.match(/(https?:\/\/[^\s]+)/);
+      if (urlMatch) {
+        image = urlMatch[0].trim();
+        name = line.replace(image, '').replace(/[\t,:\-\s]+$/, '').trim();
       } else {
         const parts = line.split(/[\t,]/);
         name = parts[0]?.trim() || '';
@@ -528,7 +505,6 @@ export default function App() {
   const handleProdSubmit = async (e) => {
     e.preventDefault();
     
-    // EXPLICIT ERROR MESSAGES
     if (!prodForm.tailor) return showToast("Missing: Please select a Tailor.", "error");
     if (!prodForm.product) return showToast("Missing: Please select a Product.", "error");
 
@@ -693,7 +669,6 @@ export default function App() {
     });
   };
 
-  // 🌟 FIX: Smart Splitter for Dropping Items (Return 1 piece instead of whole batch)
   const handleDropTask = async (taskId) => {
     if (useLocalMode) return;
     const originalDoc = tasks.find(t => t.id === taskId);
@@ -710,8 +685,9 @@ export default function App() {
     showToast("Item dropped back to queue.");
   };
 
-  // 🌟 FIX: Smart Splitter for Completing Items
-  const handleCompleteLiveSelection = async (tailorName, items) => {
+  const handleCompleteLiveSelection = async (e, tailorName, items) => {
+    e.preventDefault();
+    e.stopPropagation();
     const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0 || !imagePreview) return;
     setIsUploading(true);
@@ -760,6 +736,7 @@ export default function App() {
           await addDoc(collection(db, 'ledger'), entryData);
         }
 
+        // 🌟 FIX: Smart Splitter for Completing Items
         const tasksById = selected.reduce((acc, st) => {
            if (!acc[st.id]) acc[st.id] = { ...st, selectedQty: 0 };
            acc[st.id].selectedQty += 1;
@@ -826,12 +803,12 @@ export default function App() {
     setIsUploading(false);
   };
 
-  // 🌟 FIX: Smart Splitter for Starting Items 
   const handleStartStitching = async (group) => {
     const selected = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0) return;
     
     if (!useLocalMode) {
+      // 🌟 FIX: Smart Splitter for Starting Items
       const tasksById = selected.reduce((acc, st) => {
          if (!acc[st.id]) acc[st.id] = { ...st, selectedQty: 0 };
          acc[st.id].selectedQty += 1;
@@ -875,7 +852,6 @@ export default function App() {
     showToast("Started stitching!");
   };
 
-  // 🌟 FIX: Smart Splitter for Cancelling Items
   const executeCancelSubTask = async (st) => {
     const originalDoc = tasks.find(t => t.id === st.id);
     if (originalDoc) {
@@ -927,16 +903,28 @@ export default function App() {
     return timeFilteredEntries.filter(e => e.tailor === selectedTailorFilter);
   }, [timeFilteredEntries, selectedTailorFilter]);
 
+  // 🌟 NEW: Ledger Search Engine
   const finalLedgerEntries = useMemo(() => {
     let result = [...tailorFilteredEntries];
     if (ledgerFilterType === 'credits') result = result.filter(e => e.type === 'production');
     if (ledgerFilterType === 'debits') result = result.filter(e => e.type === 'payment');
+    
+    if (ledgerSearch.trim()) {
+       const query = ledgerSearch.toLowerCase().trim();
+       result = result.filter(e => {
+          const matchTailor = e.tailor?.toLowerCase().includes(query);
+          const matchProduct = e.product?.toLowerCase().includes(query);
+          const matchNote = e.note?.toLowerCase().includes(query);
+          return matchTailor || matchProduct || matchNote;
+       });
+    }
+
     result.sort((a, b) => {
       const dateA = new Date(a.date); const dateB = new Date(b.date);
       return ledgerSortOrder === 'desc' ? dateB - dateA : dateA - dateB;
     });
     return result;
-  }, [tailorFilteredEntries, ledgerFilterType, ledgerSortOrder]);
+  }, [tailorFilteredEntries, ledgerFilterType, ledgerSortOrder, ledgerSearch]);
 
   const totals = useMemo(() => {
     return tailorFilteredEntries.reduce((acc, curr) => {
@@ -1174,6 +1162,7 @@ export default function App() {
                      )}
                   </div>
 
+                  {/* MEGA HORIZONTAL ROW */}
                   <div className="p-6 bg-[#0a0a0a]/50">
                     <div className="flex overflow-x-auto gap-5 pb-6 custom-scrollbar snap-x snap-mandatory items-stretch">
                        {items.map(st => {
@@ -1283,7 +1272,6 @@ export default function App() {
         }
     };
 
-    // 1. Pre-filter by Status + User Settings
     const filteredPendingTasks = tasks.filter(t => {
       const isPendingOrRejected = t.status === 'pending' || t.status === 'rejected';
       if (!isPendingOrRejected) return false;
@@ -1299,7 +1287,6 @@ export default function App() {
       return true;
     });
 
-    // 2. Group into Data Structure
     const tasksByPlatform = filteredPendingTasks.reduce((acc, t) => {
       const plat = t.platform || 'Shopify / Website';
       const taskPriority = getNormalizedPriority(t.priority);
@@ -1334,7 +1321,7 @@ export default function App() {
       }
       
       for (let i = 0; i < qty; i++) {
-        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority });
+        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority, assignee: t.assignee });
       }
       return acc;
     }, {});
@@ -1361,7 +1348,7 @@ export default function App() {
       <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20 relative">
         
         {/* MEGA DASHBOARD: Sticky Command Bar */}
-        <div className="sticky top-0 z-40 bg-[#0a0a0a]/95 backdrop-blur-xl pt-2 pb-4 border-b border-gray-800 -mx-4 px-4 md:-mx-8 md:px-8">
+        <div className="sticky top-0 z-30 bg-[#0a0a0a]/95 backdrop-blur-xl pt-2 pb-4 border-b border-gray-800 -mx-4 px-4 md:-mx-8 md:px-8">
            
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
               <div>
@@ -1764,215 +1751,7 @@ export default function App() {
     );
   };
 
-  const renderAdminLedger = () => (
-    <div className="w-full space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div><h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">Financial Overview</h2><p className="text-gray-400 text-sm mt-1">Real-time ledger and balances.</p></div>
-        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-          <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto">
-            <option value="All">All Tailors Combined</option>{tailors.map(t => <option key={t} value={t}>{t} Only</option>)}
-          </select>
-          <select value={dashboardTimeFilter} onChange={(e) => setDashboardTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto">
-            <option value="all">All Time</option>
-            <option value="current_cycle">Current Pay Cycle</option>
-            <option value="last_cycle">Last Pay Cycle</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="bg-[#cdfc4c] rounded-2xl p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between shadow-xl">
-        <div>
-          <div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Total Pending Payout</div>
-          <div className="text-5xl md:text-7xl font-black text-black tracking-tighter">₹{pendingBalance.toLocaleString()}</div>
-          {pendingBalance > 0 && <div className="mt-2 text-sm font-bold text-black/70 flex items-center gap-1.5"><Shirt size={16}/> Equates to ~{unpaidPieces} unpaid outfits</div>}
-        </div>
-        <div className="mt-6 md:mt-0 md:text-right"><div className="text-black/60 text-xs font-bold uppercase tracking-wider mb-2">Pieces Stitched</div><div className="text-2xl md:text-3xl font-bold text-black">{totals.pieces} <span className="text-lg font-medium opacity-60">Items</span></div></div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-[#ffe4e6] p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-rose-800/60 mb-2">Total Earned Value</div><div className="text-3xl md:text-4xl font-black text-rose-950">₹{totals.earned.toLocaleString()}</div></div>
-        <div className="bg-[#e0f2fe] p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-sky-800/60 mb-2">Total Amount Paid</div><div className="text-3xl md:text-4xl font-black text-sky-950">₹{totals.paid.toLocaleString()}</div></div>
-        <div className="bg-[#111] border border-gray-800 p-6 rounded-2xl shadow-sm"><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-2">Active Roster</div><div className="text-3xl md:text-4xl font-black text-white">{tailors.length}</div></div>
-      </div>
-
-      <div className="bg-[#111] border border-gray-800 rounded-2xl overflow-hidden mt-8">
-        <div className="px-6 py-5 border-b border-gray-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[#0a0a0a]">
-          <h3 className="font-bold text-white tracking-tight text-lg">Transaction History</h3>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={ledgerViewMode} onChange={(e) => setLedgerViewMode(e.target.value)} className="bg-black border border-gray-800 text-xs font-bold text-white py-1.5 px-3 rounded-lg outline-none">
-              <option value="detailed">Detailed View</option>
-              <option value="outfit">Group by Outfit</option>
-              <option value="tailor">Group by Tailor</option>
-              <option value="platform">Group by Platform</option>
-            </select>
-            {ledgerViewMode === 'detailed' && (
-              <select value={ledgerFilterType} onChange={(e) => setLedgerFilterType(e.target.value)} className="bg-black border border-gray-800 text-xs font-bold text-white py-1.5 px-3 rounded-lg outline-none">
-                <option value="all">All Transactions</option>
-                <option value="credits">Credits Only (+)</option>
-                <option value="debits">Debits Only (-)</option>
-              </select>
-            )}
-            <span className="text-xs bg-gray-800 text-gray-300 px-3 py-1.5 rounded-full font-bold">{ledgerViewMode === 'detailed' ? finalLedgerEntries.length : (ledgerViewMode === 'outfit' ? groupedByProduct.length : (ledgerViewMode === 'platform' ? groupedByPlatform.length : groupedByTailor.length))} Records</span>
-          </div>
-        </div>
-        
-        <div className="overflow-x-auto w-full">
-          {ledgerViewMode === 'detailed' ? (
-            finalLedgerEntries.length === 0 ? (
-              <div className="p-12 text-center text-gray-600"><FileText size={40} className="mx-auto mb-4 opacity-20" /><p>No transactions found.</p></div>
-            ) : (
-              <table className="w-full text-sm text-left">
-                <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                  <tr>
-                    <th className="px-6 py-4 cursor-pointer hover:text-white transition-colors group flex items-center gap-1" onClick={() => setLedgerSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}>DATE <ChevronDown size={12} className={`transition-transform ${ledgerSortOrder === 'asc' ? 'rotate-180' : ''}`} /></th>
-                    <th className="px-6 py-4">Tailor</th>
-                    <th className="px-6 py-4">Details</th>
-                    <th className="px-6 py-4 text-center">QC Photo</th>
-                    <th className="px-6 py-4 text-right">Credit (+)</th>
-                    <th className="px-6 py-4 text-right">Debit (-)</th>
-                    <th className="px-6 py-4 text-center">Admin Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800/50">
-                  {finalLedgerEntries.map((entry) => {
-                    const entryImage = findProductImage(entry.product);
-                    return (
-                    <tr key={entry.id} className={`hover:bg-gray-800/30 transition-colors group ${entry.qcStatus === 'rejected' ? 'opacity-50 bg-rose-900/10' : ''}`}>
-                      <td className="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">{entry.date}</td>
-                      <td className="px-6 py-4 whitespace-nowrap font-bold text-white">{entry.tailor}</td>
-                      <td className="px-6 py-4">
-                        {entry.type === 'production' ? (
-                          <div className="flex items-center gap-3">
-                             {entryImage ? (
-                               <img src={entryImage} className="w-10 h-10 rounded-lg object-cover border border-gray-700 bg-black shrink-0" />
-                             ) : (
-                               <div className="w-10 h-10 rounded-lg bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>
-                             )}
-                             <div>
-                               <div className="text-white font-bold">{formatProductName(entry.product)}</div>
-                               <div className="flex flex-wrap items-center gap-2 mt-1">
-                                 <div className="text-xs text-gray-500">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</div>
-                                 <div className="text-[10px] bg-gray-800 text-gray-300 px-2 py-0.5 rounded font-bold uppercase tracking-widest">
-                                   Sizes: {Object.entries(entry.sizes || {}).filter(([_, q]) => Number(q) > 0).map(([s, q]) => `${s}:${q}`).join(', ')}
-                                 </div>
-                                 <div className="text-[10px] bg-purple-900/20 text-purple-400 border border-purple-900/50 px-2 py-0.5 rounded font-bold uppercase tracking-widest">
-                                   {entry.platform || 'Shopify / Website'}
-                                 </div>
-                               </div>
-                             </div>
-                          </div>
-                        ) : (
-                          <div><div className="text-sky-400 font-bold flex items-center gap-1.5"><Wallet size={14} /> Cash Payout</div>{entry.note && <div className="text-xs text-gray-500 mt-1">{entry.note}</div>}</div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                         {entry.imageUrl ? (
-                           <button onClick={() => setLightboxData({ url: entry.imageUrl, timestamp: entry.timestamp, tailor: entry.tailor, product: formatProductName(entry.product) })} className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 px-3 py-1.5 rounded-full hover:bg-blue-400 hover:text-white transition-colors border border-blue-900/50"><Camera size={12}/> View</button>
-                         ) : <span className="text-gray-700 font-bold text-xs">-</span>}
-                      </td>
-                      <td className="px-6 py-4 text-right font-bold text-white">{entry.type === 'production' ? <span className={entry.qcStatus === 'rejected' ? 'line-through text-gray-600' : 'text-[#cdfc4c]'}>₹{entry.amount.toLocaleString()}</span> : '-'}</td>
-                      <td className="px-6 py-4 text-right font-bold text-sky-400">{entry.type === 'payment' ? `₹${entry.amount.toLocaleString()}` : '-'}</td>
-                      <td className="px-6 py-4 text-center">
-                        {deletingId === entry.id ? (
-                          <div className="flex justify-center items-center gap-2 bg-[#0a0a0a] p-1 rounded-lg border border-gray-800">
-                            <span className="text-[10px] font-bold text-rose-500 uppercase px-2">Sure?</span>
-                            <button onClick={() => deleteEntry(entry.id)} className="text-white font-black text-[10px] bg-rose-600 px-3 py-1 rounded hover:bg-rose-500 transition-colors uppercase">Yes</button>
-                            <button onClick={() => setDeletingId(null)} className="text-gray-400 font-black text-[10px] px-3 py-1 rounded hover:bg-gray-800 transition-colors uppercase">No</button>
-                          </div>
-                        ) : rejectingId === entry.id ? (
-                          <div className="flex justify-center items-center gap-2 bg-rose-900/20 p-1 rounded-lg border border-rose-900/50">
-                            <span className="text-[10px] font-bold text-rose-500 uppercase px-2">Confirm Reject?</span>
-                            <button onClick={() => confirmRejectBatch(entry)} className="text-white font-black text-[10px] bg-rose-600 px-3 py-1 rounded hover:bg-rose-500 transition-colors uppercase">Yes</button>
-                            <button onClick={() => setRejectingId(null)} className="text-gray-400 font-black text-[10px] px-3 py-1 rounded hover:bg-gray-800 transition-colors uppercase">No</button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center gap-3">
-                             {entry.type === 'production' && entry.qcStatus === 'pending' && (
-                               <>
-                                 <button onClick={() => handleApproveBatch(entry)} className="px-3 py-1 bg-green-900/20 border border-green-900/50 text-green-500 rounded text-[10px] font-black uppercase tracking-widest hover:bg-green-50 hover:text-white transition-colors">Approve</button>
-                                 <button onClick={() => setRejectingId(entry.id)} className="px-3 py-1 bg-rose-900/20 border border-rose-900/50 text-rose-500 rounded text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-colors">Reject</button>
-                               </>
-                             )}
-                             {entry.type === 'production' && entry.qcStatus === 'approved' && <span className="text-green-500 text-[10px] font-black uppercase tracking-widest bg-green-900/10 px-2 py-1 rounded border border-green-900/30 flex items-center gap-1"><CheckCircle size={10}/> Approved</span>}
-                             {entry.type === 'production' && entry.qcStatus === 'rejected' && <span className="text-rose-500 text-[10px] font-black uppercase tracking-widest bg-rose-900/10 px-2 py-1 rounded border border-rose-900/30">Rejected</span>}
-                             
-                             <div className="flex items-center gap-2 ml-2 border-l border-gray-800 pl-3">
-                               <button onClick={() => startEdit(entry)} className="text-gray-500 hover:text-white transition-colors"><Edit2 size={16} /></button>
-                               <button onClick={() => setDeletingId(entry.id)} className="text-gray-500 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
-                             </div>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )})}
-                </tbody>
-              </table>
-            )
-          ) : ledgerViewMode === 'outfit' ? (
-            <table className="w-full text-sm text-left">
-              <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                <tr><th className="px-6 py-4">Product / Style</th><th className="px-6 py-4 text-center">Total Pieces Stitched</th><th className="px-6 py-4 text-right">Total Value Generated</th></tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {groupedByProduct.map((prod, i) => {
-                  const entryImage = findProductImage(prod.name);
-                  return (
-                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-6 py-4">
-                       <div className="flex items-center gap-4">
-                          {entryImage ? <img src={entryImage} className="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-black shrink-0" /> : <div className="w-12 h-12 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={20} className="text-gray-600" /></div>}
-                          <div>
-                            <div className="font-bold text-white text-base">{formatProductName(prod.name)}</div>
-                            <div className="text-xs text-gray-500 mt-1 uppercase tracking-widest font-bold">Sizes combined: <span className="text-gray-300">{Object.entries(prod.sizes).map(([s, q]) => `${s}:${q}`).join(', ')}</span></div>
-                          </div>
-                       </div>
-                    </td>
-                    <td className="px-6 py-4 text-center font-black text-xl text-white">{prod.pieces}</td>
-                    <td className="px-6 py-4 text-right font-black text-[#cdfc4c] text-lg">₹{prod.value.toLocaleString()}</td>
-                  </tr>
-                )})}
-              </tbody>
-            </table>
-          ) : ledgerViewMode === 'platform' ? (
-            <table className="w-full text-sm text-left">
-              <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                <tr><th className="px-6 py-4">Sales Platform</th><th className="px-6 py-4 text-center">Total Pieces Stitched</th><th className="px-6 py-4 text-right">Production Cost Generated</th></tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {groupedByPlatform.map((plat, i) => (
-                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-6 py-4 font-bold text-white text-lg flex items-center gap-3"><div className="w-8 h-8 rounded-xl bg-purple-900/20 border border-purple-900/50 flex items-center justify-center text-purple-400"><ShoppingBag size={14}/></div> {plat.name}</td>
-                    <td className="px-6 py-4 text-center font-bold text-gray-300">{plat.pieces}</td>
-                    <td className="px-6 py-4 text-right font-black text-[#cdfc4c] text-lg">₹{plat.value.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <table className="w-full text-sm text-left">
-              <thead className="bg-[#0a0a0a] text-gray-500 font-bold text-[10px] uppercase tracking-widest">
-                <tr><th className="px-6 py-4">Tailor Name</th><th className="px-6 py-4 text-center">Total Pieces</th><th className="px-6 py-4 text-right">Total Earned</th><th className="px-6 py-4 text-right">Total Paid</th><th className="px-6 py-4 text-right">Pending Balance</th></tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {groupedByTailor.map((t, i) => (
-                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-6 py-4 font-bold text-white text-lg flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-gray-400"><User size={14}/></div> {t.name}</td>
-                    <td className="px-6 py-4 text-center font-bold text-gray-300">{t.pieces}</td>
-                    <td className="px-6 py-4 text-right font-bold text-[#cdfc4c]">₹{t.earned.toLocaleString()}</td>
-                    <td className="px-6 py-4 text-right font-bold text-sky-400">₹{t.paid.toLocaleString()}</td>
-                    <td className={`px-6 py-4 text-right font-black text-lg ${t.earned - t.paid > 0 ? 'text-rose-500' : 'text-gray-500'}`}>₹{(t.earned - t.paid).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
   const renderStats = () => {
-    // 1. Time Filtering for Stats
     const now = new Date();
     let startDate = new Date();
     if (statsTimeFilter === '7days') startDate.setDate(now.getDate() - 7);
@@ -1980,13 +1759,12 @@ export default function App() {
     else if (statsTimeFilter === 'thisMonth') startDate = new Date(now.getFullYear(), now.getMonth(), 1);
     else if (statsTimeFilter === 'lastMonth') {
       startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      now.setDate(0); // End of last month
-    } else startDate = new Date(0); // All time
+      now.setDate(0); 
+    } else startDate = new Date(0); 
 
     const statEntries = entries.filter(e => new Date(e.date) >= startDate && new Date(e.date) <= now);
     const prodEntries = statEntries.filter(e => e.type === 'production');
 
-    // 2. High-Level KPIs
     const totalPieces = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.totalPieces) : 0), 0);
     const totalValue = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.amount) : 0), 0);
     
@@ -1994,16 +1772,14 @@ export default function App() {
     const totalAttemptedPieces = totalPieces + rejectedPieces;
     const qcRejectionRate = totalAttemptedPieces > 0 ? ((rejectedPieces / totalAttemptedPieces) * 100).toFixed(1) : 0;
 
-    // 3. Tailor Leaderboard
     const tailorStats = tailors.map(t => {
       const tEntries = prodEntries.filter(e => e.tailor === t && e.qcStatus !== 'rejected');
       const pieces = tEntries.reduce((sum, e) => sum + Number(e.totalPieces), 0);
       const value = tEntries.reduce((sum, e) => sum + Number(e.amount), 0);
       return { name: t, pieces, value };
     }).sort((a, b) => b.pieces - a.pieces);
-    const topTailorPieces = tailorStats[0]?.pieces || 1; // for progress bar scaling
+    const topTailorPieces = tailorStats[0]?.pieces || 1; 
 
-    // 4. Platform Dominance
     const platformStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
       const plat = e.platform || 'Shopify / Website';
       if (!acc[plat]) acc[plat] = { pieces: 0, value: 0 };
@@ -2014,7 +1790,6 @@ export default function App() {
     const sortedPlatforms = Object.entries(platformStats).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.pieces - a.pieces);
     const topPlatformPieces = sortedPlatforms[0]?.pieces || 1;
 
-    // 5. Top 5 Best-Selling Styles
     const productStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
       const prod = formatProductName(e.product);
       if (!acc[prod]) acc[prod] = 0;
@@ -2159,6 +1934,244 @@ export default function App() {
       </div>
     );
   };
+
+  const renderAdminLedger = () => (
+    <div className="w-full space-y-6 animate-in fade-in duration-500 pb-20">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+           <h2 className="text-3xl font-black text-white tracking-tight">Financial Ledger</h2>
+           <p className="text-gray-400 text-sm mt-1">Real-time ledger and balances.</p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+          <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto cursor-pointer">
+            <option value="All">All Tailors Combined</option>{tailors.map(t => <option key={t} value={t}>{t} Only</option>)}
+          </select>
+          <select value={dashboardTimeFilter} onChange={(e) => setDashboardTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto cursor-pointer">
+            <option value="all">All Time</option>
+            <option value="current_cycle">Current Pay Cycle</option>
+            <option value="last_cycle">Last Pay Cycle</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Top Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="md:col-span-2 bg-gradient-to-br from-[#cdfc4c] to-[#a3d827] rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_30px_rgba(205,252,76,0.15)] relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-48 h-48 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+          <div>
+            <div className="text-black/60 text-xs font-bold uppercase tracking-widest mb-2">Total Pending Payout</div>
+            <div className="text-5xl md:text-6xl font-black text-black tracking-tighter">₹{pendingBalance.toLocaleString()}</div>
+          </div>
+          <div className="mt-6 text-sm font-bold text-black/80 flex items-center gap-2 bg-black/5 px-4 py-2 rounded-xl inline-flex w-fit backdrop-blur-sm">
+             <Shirt size={16}/> Equates to ~{unpaidPieces} unpaid pieces
+          </div>
+        </div>
+
+        <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex flex-col justify-between">
+           <div>
+              <div className="text-rose-500/80 text-[10px] uppercase tracking-widest font-bold mb-2">Total Earned Value</div>
+              <div className="text-3xl md:text-4xl font-black text-white">₹{totals.earned.toLocaleString()}</div>
+           </div>
+           <div className="mt-6 text-gray-500 text-sm font-bold flex items-center gap-1.5"><Scissors size={14}/> {totals.pieces} pieces stitched</div>
+        </div>
+
+        <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex flex-col justify-between">
+           <div>
+              <div className="text-sky-400/80 text-[10px] uppercase tracking-widest font-bold mb-2">Total Amount Paid</div>
+              <div className="text-3xl md:text-4xl font-black text-white">₹{totals.paid.toLocaleString()}</div>
+           </div>
+           <div className="mt-6 text-gray-500 text-sm font-bold flex items-center gap-1.5"><Wallet size={14}/> Cash payouts</div>
+        </div>
+      </div>
+
+      {/* Ledger Controls & Data */}
+      <div className="mt-8">
+        
+        {/* Sleek Filter Bar */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-[#111] p-4 rounded-2xl border border-gray-800">
+           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              <select value={ledgerViewMode} onChange={(e) => setLedgerViewMode(e.target.value)} className="bg-black border border-gray-700 text-sm font-bold text-white py-2 px-4 rounded-xl outline-none cursor-pointer focus:ring-2 focus:ring-[#cdfc4c]">
+                <option value="detailed">Detailed List</option>
+                <option value="outfit">Group by Outfit</option>
+                <option value="tailor">Group by Tailor</option>
+                <option value="platform">Group by Platform</option>
+              </select>
+              {ledgerViewMode === 'detailed' && (
+                <select value={ledgerFilterType} onChange={(e) => setLedgerFilterType(e.target.value)} className="bg-black border border-gray-700 text-sm font-bold text-white py-2 px-4 rounded-xl outline-none cursor-pointer focus:ring-2 focus:ring-[#cdfc4c]">
+                  <option value="all">All Transactions</option>
+                  <option value="credits">Credits Only (+)</option>
+                  <option value="debits">Debits Only (-)</option>
+                </select>
+              )}
+           </div>
+           
+           <div className="flex items-center gap-3 w-full md:w-auto">
+              {ledgerViewMode === 'detailed' && (
+                 <div className="relative w-full md:w-64">
+                    <Search size={16} className="absolute left-3 top-3 text-gray-500"/>
+                    <input type="text" value={ledgerSearch} onChange={(e) => setLedgerSearch(e.target.value)} placeholder="Search records..." className="w-full pl-9 pr-4 py-2 bg-black border border-gray-700 rounded-xl text-sm text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+                 </div>
+              )}
+              <span className="text-xs bg-gray-800 text-gray-400 px-3 py-2 rounded-xl font-bold whitespace-nowrap hidden sm:block">
+                 {ledgerViewMode === 'detailed' ? finalLedgerEntries.length : (ledgerViewMode === 'outfit' ? groupedByProduct.length : (ledgerViewMode === 'platform' ? groupedByPlatform.length : groupedByTailor.length))} Records
+              </span>
+           </div>
+        </div>
+        
+        {/* Dynamic High-Volume Render */}
+        <div className="w-full">
+          {ledgerViewMode === 'detailed' ? (
+            finalLedgerEntries.length === 0 ? (
+              <div className="p-16 text-center text-gray-600 bg-[#111] rounded-3xl border border-gray-800"><FileText size={48} className="mx-auto mb-4 opacity-20" /><p className="font-bold">No transactions found.</p></div>
+            ) : (
+              <div className="space-y-3">
+                 {finalLedgerEntries.map((entry) => {
+                    const entryImage = findProductImage(entry.product);
+                    const isReject = entry.qcStatus === 'rejected';
+                    const isPending = entry.qcStatus === 'pending';
+                    const isApproved = entry.qcStatus === 'approved';
+
+                    return (
+                      <div key={entry.id} className={`flex flex-col lg:flex-row gap-4 lg:items-center justify-between p-4 rounded-2xl border transition-all shadow-md ${isReject ? 'bg-rose-950/10 border-rose-900/40 opacity-80' : 'bg-[#111] border-gray-800 hover:border-gray-600'}`}>
+                         
+                         {/* Section 1: Identity & Date */}
+                         <div className="flex items-center gap-3 min-w-[200px]">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold shrink-0 ${entry.type === 'payment' ? 'bg-sky-900/20 text-sky-400 border border-sky-900/50' : 'bg-gray-800 text-gray-400'}`}>
+                               {entry.type === 'payment' ? <Wallet size={20}/> : <User size={20}/>}
+                            </div>
+                            <div>
+                               <div className="text-white font-black text-base">{entry.tailor}</div>
+                               <div className="text-gray-500 text-xs font-bold flex items-center gap-1.5 mt-0.5"><Calendar size={12}/> {entry.date}</div>
+                            </div>
+                         </div>
+
+                         {/* Section 2: Details */}
+                         <div className="flex-1 flex items-center gap-4 bg-black/20 p-3 rounded-xl border border-white/5">
+                            {entry.type === 'production' ? (
+                               <>
+                                 {entryImage ? <img src={entryImage} className="w-16 h-16 rounded-xl object-cover bg-black border border-gray-700 shrink-0"/> : <div className="w-16 h-16 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={24} className="text-gray-600"/></div>}
+                                 <div className="min-w-0">
+                                    <div className="text-white font-black text-sm lg:text-base leading-tight mb-1.5 truncate">{formatProductName(entry.product)}</div>
+                                    <div className="flex flex-wrap gap-2">
+                                       <span className="bg-gray-800 text-gray-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</span>
+                                       <span className="bg-purple-900/30 text-purple-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.platform || 'Shopify'}</span>
+                                       {entry.sizes && <span className="bg-blue-900/30 text-blue-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">Sizes: {Object.entries(entry.sizes).filter(([_,q])=>Number(q)>0).map(([s,q])=>`${s}:${q}`).join(', ')}</span>}
+                                    </div>
+                                 </div>
+                               </>
+                            ) : (
+                               <div className="flex-1">
+                                  <div className="text-sky-400 font-black text-base mb-1.5">Cash Payout Settled</div>
+                                  {entry.note && <div className="text-gray-400 text-xs bg-black/40 px-3 py-1.5 rounded-lg inline-block border border-gray-800/50">{entry.note}</div>}
+                               </div>
+                            )}
+                         </div>
+
+                         {/* Section 3: Financials */}
+                         <div className="min-w-[120px] text-left lg:text-right px-2 lg:px-4">
+                            <div className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">{entry.type === 'production' ? 'Earned Value' : 'Amount Paid'}</div>
+                            <div className={`text-2xl font-black tracking-tight ${entry.type === 'production' ? (isReject ? 'text-gray-600 line-through' : 'text-[#cdfc4c]') : 'text-sky-400'}`}>
+                               {entry.type === 'payment' ? '-' : '+'} ₹{entry.amount.toLocaleString()}
+                            </div>
+                         </div>
+
+                         {/* Section 4: Actions & QC */}
+                         <div className="flex flex-col lg:items-end justify-center gap-2 min-w-[200px] border-t lg:border-t-0 lg:border-l border-gray-800 pt-4 lg:pt-0 lg:pl-6">
+                            
+                            {entry.type === 'production' && (
+                               <div className="flex items-center gap-2 w-full lg:justify-end mb-1">
+                                  {isPending && (
+                                     <>
+                                        <button onClick={()=>handleApproveBatch(entry)} className="flex-1 lg:flex-none px-4 py-2 bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-black rounded-xl text-xs font-black uppercase tracking-widest transition-all border border-green-500/30 flex items-center justify-center gap-1.5"><CheckCircle size={14}/> Approve</button>
+                                        <button onClick={()=>setRejectingId(entry.id)} className="flex-1 lg:flex-none px-4 py-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all border border-rose-500/30 flex items-center justify-center gap-1.5"><AlertCircle size={14}/> Reject</button>
+                                     </>
+                                  )}
+                                  {isApproved && <span className="text-green-500 text-[10px] font-black uppercase tracking-widest flex items-center gap-1 bg-green-500/10 px-3 py-1.5 rounded-lg border border-green-500/20"><CheckCircle size={14}/> Approved</span>}
+                                  {isReject && <span className="text-rose-500 text-[10px] font-black uppercase tracking-widest flex items-center gap-1 bg-rose-500/10 px-3 py-1.5 rounded-lg border border-rose-500/20"><AlertCircle size={14}/> Rejected</span>}
+                               </div>
+                            )}
+                            
+                            <div className="flex items-center gap-2 w-full lg:justify-end mt-1">
+                               {entry.imageUrl && (
+                                  <button onClick={() => setLightboxData({ url: entry.imageUrl, timestamp: entry.timestamp, tailor: entry.tailor, product: formatProductName(entry.product) })} className="px-3 py-2 text-xs font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 border border-blue-900/50 hover:bg-blue-500 hover:text-white rounded-xl flex items-center justify-center gap-1.5 transition-colors flex-1 lg:flex-none"><Camera size={14}/> View QC</button>
+                               )}
+                               <button onClick={() => startEdit(entry)} className="p-2 text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors border border-gray-700" title="Edit"><Edit2 size={16}/></button>
+                               
+                               {deletingId === entry.id ? (
+                                  <div className="flex items-center gap-1 bg-rose-900/30 p-1 rounded-xl border border-rose-900/50">
+                                     <button onClick={() => deleteEntry(entry.id)} className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-black uppercase transition-colors">Del</button>
+                                     <button onClick={() => setDeletingId(null)} className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-[10px] font-black uppercase transition-colors">No</button>
+                                  </div>
+                               ) : (
+                                  <button onClick={() => setDeletingId(entry.id)} className="p-2 text-gray-400 hover:text-white bg-gray-800 hover:bg-rose-600 rounded-xl transition-colors border border-gray-700 hover:border-rose-500" title="Delete"><Trash2 size={16}/></button>
+                               )}
+                            </div>
+                         </div>
+                      </div>
+                    );
+                 })}
+              </div>
+            )
+          ) : ledgerViewMode === 'outfit' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {groupedByProduct.map((prod, i) => {
+                const entryImage = findProductImage(prod.name);
+                return (
+                  <div key={i} className="bg-[#111] p-5 rounded-3xl border border-gray-800 flex items-center gap-4 hover:border-gray-600 transition-colors shadow-lg">
+                    {entryImage ? <img src={entryImage} className="w-20 h-20 rounded-2xl object-cover bg-black border border-gray-700 shrink-0" /> : <div className="w-20 h-20 rounded-2xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={28} className="text-gray-600" /></div>}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-black text-white text-lg leading-tight truncate mb-1">{formatProductName(prod.name)}</div>
+                      <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest line-clamp-1">Sizes: <span className="text-gray-300">{Object.entries(prod.sizes).map(([s, q]) => `${s}:${q}`).join(', ')}</span></div>
+                      <div className="mt-2 text-[#cdfc4c] font-black text-xl">₹{prod.value.toLocaleString()}</div>
+                    </div>
+                    <div className="text-right shrink-0 bg-gray-900 rounded-xl p-3 border border-gray-800">
+                      <div className="text-2xl font-black text-white">{prod.pieces}</div>
+                      <div className="text-[9px] text-gray-500 font-black uppercase tracking-widest">Pcs</div>
+                    </div>
+                  </div>
+              )})}
+            </div>
+          ) : ledgerViewMode === 'platform' ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {groupedByPlatform.map((plat, i) => (
+                <div key={i} className="bg-[#111] p-6 rounded-3xl border border-gray-800 hover:border-gray-600 transition-colors shadow-lg flex flex-col justify-between">
+                  <div className="flex items-center gap-3 mb-6">
+                     <div className="w-12 h-12 rounded-2xl bg-purple-900/20 border border-purple-900/50 flex items-center justify-center text-purple-400"><ShoppingBag size={20}/></div> 
+                     <div className="font-black text-white text-2xl">{plat.name}</div>
+                  </div>
+                  <div className="space-y-3">
+                     <div className="flex justify-between items-center"><span className="text-gray-500 font-bold text-sm uppercase tracking-widest">Pieces</span><span className="font-black text-xl text-white">{plat.pieces}</span></div>
+                     <div className="w-full h-px bg-gray-800"></div>
+                     <div className="flex justify-between items-center"><span className="text-gray-500 font-bold text-sm uppercase tracking-widest">Labor Cost</span><span className="font-black text-2xl text-[#cdfc4c]">₹{plat.value.toLocaleString()}</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {groupedByTailor.map((t, i) => (
+                <div key={i} className="bg-[#111] p-6 rounded-3xl border border-gray-800 hover:border-gray-600 transition-colors shadow-lg flex flex-col justify-between">
+                   <div className="flex items-center gap-4 mb-6">
+                      <div className="w-14 h-14 rounded-full bg-gray-800 border-2 border-gray-700 flex items-center justify-center text-gray-400"><User size={24}/></div>
+                      <div className="text-2xl font-black text-white truncate">{t.name}</div>
+                   </div>
+                   <div className="space-y-3 bg-black/20 p-4 rounded-2xl border border-white/5">
+                      <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Pieces Stitched</span><span className="font-black text-white text-lg">{t.pieces}</span></div>
+                      <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Total Earned</span><span className="font-black text-[#cdfc4c]">₹{t.earned.toLocaleString()}</span></div>
+                      <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Total Paid</span><span className="font-black text-sky-400">₹{t.paid.toLocaleString()}</span></div>
+                   </div>
+                   <div className="mt-4 flex justify-between items-center">
+                      <span className="text-gray-400 font-black uppercase tracking-widest text-[10px]">Current Balance</span>
+                      <span className={`font-black text-2xl ${t.earned - t.paid > 0 ? 'text-rose-500' : 'text-gray-500'}`}>₹{(t.earned - t.paid).toLocaleString()}</span>
+                   </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   const renderSetup = () => (
     <div className="w-full max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -2413,6 +2426,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {renderCameraModal()}
 
       {toast && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in">
