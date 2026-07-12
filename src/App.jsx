@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter, BarChart3, TrendingUp, AlertTriangle
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -72,7 +72,7 @@ export default function App() {
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [taskProductSearch, setTaskProductSearch] = useState(''); // Search for Admin Assign Task Dropdown
   const [taskFilterOption, setTaskFilterOption] = useState('All');
-  const [activeTaskPlatform, setActiveTaskPlatform] = useState('Shopify / Website');
+  const [expandedPlatforms, setExpandedPlatforms] = useState({});
 
   // Form States
   const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' });
@@ -171,6 +171,7 @@ export default function App() {
   const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
   const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
   const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
+  const [statsTimeFilter, setStatsTimeFilter] = useState('30days');
 
   const [signOffStartDate, setSignOffStartDate] = useState(currentCycle.start);
   const [signOffEndDate, setSignOffEndDate] = useState(currentCycle.end);
@@ -297,6 +298,31 @@ export default function App() {
     };
   }, [loading]);
 
+  // 🌟 Auto-open first platform when tasks load
+  useEffect(() => {
+    if (tasks.length > 0 && Object.keys(expandedPlatforms).length === 0) {
+      const platformsPresent = new Set();
+      tasks.forEach(t => {
+         if (t.status === 'pending' || t.status === 'rejected') {
+            platformsPresent.add(t.platform || 'Shopify / Website');
+         }
+      });
+      const order = ['Shopify / Website', 'Amazon', 'Myntra'];
+      const firstActive = order.find(p => platformsPresent.has(p)) || Array.from(platformsPresent)[0];
+      
+      if (firstActive) {
+         setExpandedPlatforms({ [firstActive]: true });
+      }
+    }
+  }, [tasks]);
+
+  const togglePlatform = (plat) => {
+     setExpandedPlatforms(prev => ({
+        ...prev,
+        [plat]: !prev[plat]
+     }));
+  };
+
   const startCamera = async () => {
     setIsCameraOpen(true);
     try {
@@ -376,13 +402,16 @@ export default function App() {
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
     
+    // 🌟 BULLETPROOF PARSER: Splits string exactly at "http" to grab the URL perfectly
     const newProducts = setupForm.productsText.split('\n').map(line => {
       let name = '';
       let image = null;
       
       const httpIndex = line.toLowerCase().indexOf('http');
       if (httpIndex !== -1) {
+        // Everything from 'http' to the end is the image link
         image = line.substring(httpIndex).trim();
+        // Everything before 'http' is the name (we clean off colons and spaces)
         name = line.substring(0, httpIndex).replace(/[\t,:\-\s]+$/, '').trim();
       } else {
         const parts = line.split(/[\t,]/);
@@ -499,11 +528,13 @@ export default function App() {
   const handleProdSubmit = async (e) => {
     e.preventDefault();
     
+    // EXPLICIT ERROR MESSAGES
     if (!prodForm.tailor) return showToast("Missing: Please select a Tailor.", "error");
     if (!prodForm.product) return showToast("Missing: Please select a Product.", "error");
 
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
     if (totalPieces === 0) return showToast("Missing: Enter at least 1 piece in the sizes section.", "error");
+    
     if (!imagePreview) return showToast("Missing: Please attach a QC Photo!", "error");
 
     setIsUploading(true);
@@ -662,15 +693,25 @@ export default function App() {
     });
   };
 
+  // 🌟 FIX: Smart Splitter for Dropping Items (Return 1 piece instead of whole batch)
   const handleDropTask = async (taskId) => {
     if (useLocalMode) return;
-    await updateDoc(doc(db, 'priority_tasks', taskId), { status: 'pending', startedBy: null, startedAt: null });
+    const originalDoc = tasks.find(t => t.id === taskId);
+    if (!originalDoc) return;
+    
+    const origQty = Number(originalDoc.quantity) || 1;
+    if (origQty <= 1) {
+        await updateDoc(doc(db, 'priority_tasks', taskId), { status: 'pending', startedBy: null, startedAt: null });
+    } else {
+        await updateDoc(doc(db, 'priority_tasks', taskId), { quantity: origQty - 1 });
+        const { id, ...taskDataWithoutId } = originalDoc;
+        await addDoc(collection(db, 'priority_tasks'), { ...taskDataWithoutId, quantity: 1, status: 'pending', startedBy: null, startedAt: null });
+    }
     showToast("Item dropped back to queue.");
   };
 
-  const handleCompleteLiveSelection = async (e, tailorName, items) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // 🌟 FIX: Smart Splitter for Completing Items
+  const handleCompleteLiveSelection = async (tailorName, items) => {
     const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0 || !imagePreview) return;
     setIsUploading(true);
@@ -719,8 +760,30 @@ export default function App() {
           await addDoc(collection(db, 'ledger'), entryData);
         }
 
-        for (const st of selected) {
-          await updateDoc(doc(db, 'priority_tasks', st.id), { status: 'completed' });
+        const tasksById = selected.reduce((acc, st) => {
+           if (!acc[st.id]) acc[st.id] = { ...st, selectedQty: 0 };
+           acc[st.id].selectedQty += 1;
+           return acc;
+        }, {});
+
+        for (const [origId, data] of Object.entries(tasksById)) {
+           const originalDoc = tasks.find(t => t.id === origId);
+           if (!originalDoc) continue;
+
+           const origQty = Number(originalDoc.quantity) || 1;
+           const selQty = data.selectedQty;
+
+           if (selQty >= origQty) {
+              await updateDoc(doc(db, 'priority_tasks', origId), { status: 'completed' });
+           } else {
+              const { id, ...taskDataWithoutId } = originalDoc;
+              await updateDoc(doc(db, 'priority_tasks', origId), { quantity: origQty - selQty });
+              await addDoc(collection(db, 'priority_tasks'), { 
+                  ...taskDataWithoutId, 
+                  quantity: selQty, 
+                  status: 'completed' 
+              });
+           }
         }
       } else {
         let newEntries = [...entries];
@@ -763,21 +826,48 @@ export default function App() {
     setIsUploading(false);
   };
 
+  // 🌟 FIX: Smart Splitter for Starting Items 
   const handleStartStitching = async (group) => {
     const selected = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0) return;
+    
     if (!useLocalMode) {
-      for (const st of selected) {
+      const tasksById = selected.reduce((acc, st) => {
+         if (!acc[st.id]) acc[st.id] = { ...st, selectedQty: 0 };
+         acc[st.id].selectedQty += 1;
+         return acc;
+      }, {});
+
+      for (const [origId, data] of Object.entries(tasksById)) {
         let assignedTailor = prodForm.tailor;
-        if (role === 'admin' && st.assignee && st.assignee !== 'Any') {
-           assignedTailor = st.assignee;
+        if (role === 'admin' && data.assignee && data.assignee !== 'Any') {
+           assignedTailor = data.assignee;
         }
-        
-        await updateDoc(doc(db, 'priority_tasks', st.id), { 
-          status: 'in_progress', 
-          startedBy: assignedTailor || 'Unknown', 
-          startedAt: new Date().toISOString() 
-        });
+        const startedByName = assignedTailor || 'Unknown';
+
+        const originalDoc = tasks.find(t => t.id === origId);
+        if (!originalDoc) continue;
+
+        const origQty = Number(originalDoc.quantity) || 1;
+        const selQty = data.selectedQty;
+
+        if (selQty >= origQty) {
+           await updateDoc(doc(db, 'priority_tasks', origId), { 
+             status: 'in_progress', 
+             startedBy: startedByName, 
+             startedAt: new Date().toISOString() 
+           });
+        } else {
+           const { id, ...taskDataWithoutId } = originalDoc;
+           await updateDoc(doc(db, 'priority_tasks', origId), { quantity: origQty - selQty });
+           await addDoc(collection(db, 'priority_tasks'), { 
+               ...taskDataWithoutId, 
+               quantity: selQty, 
+               status: 'in_progress', 
+               startedBy: startedByName, 
+               startedAt: new Date().toISOString() 
+           });
+        }
       }
     }
     setSelectedSubTaskIds(new Set());
@@ -785,11 +875,26 @@ export default function App() {
     showToast("Started stitching!");
   };
 
+  // 🌟 FIX: Smart Splitter for Cancelling Items
   const executeCancelSubTask = async (st) => {
-    addToBlacklist([st.id]);
-    setTasks(prev => prev.filter(t => t.id !== st.id));
-    if (!useLocalMode) {
-      try { await updateDoc(doc(db, 'priority_tasks', st.id), { status: 'cancelled', quantity: 0 }); } catch(e) {}
+    const originalDoc = tasks.find(t => t.id === st.id);
+    if (originalDoc) {
+        const origQty = Number(originalDoc.quantity) || 1;
+        if (origQty <= 1) {
+            addToBlacklist([st.id]);
+            setTasks(prev => prev.filter(t => t.id !== st.id));
+            if (!useLocalMode) {
+                try { await updateDoc(doc(db, 'priority_tasks', st.id), { status: 'cancelled', quantity: 0 }); } catch(e) {}
+            }
+        } else {
+            if (!useLocalMode) {
+                try {
+                    await updateDoc(doc(db, 'priority_tasks', st.id), { quantity: origQty - 1 });
+                    const { id, ...taskDataWithoutId } = originalDoc;
+                    await addDoc(collection(db, 'priority_tasks'), { ...taskDataWithoutId, quantity: 1, status: 'cancelled' });
+                } catch(e) {}
+            }
+        }
     }
     setCancellingSubId(null);
     showToast("Piece removed!");
@@ -804,7 +909,6 @@ export default function App() {
       document.exitFullscreen();
     }
   };
-  // --------------------------------------------------------
 
   const timeFilteredEntries = useMemo(() => {
     if (dashboardTimeFilter === 'all') return entries;
@@ -1070,7 +1174,6 @@ export default function App() {
                      )}
                   </div>
 
-                  {/* MEGA HORIZONTAL ROW */}
                   <div className="p-6 bg-[#0a0a0a]/50">
                     <div className="flex overflow-x-auto gap-5 pb-6 custom-scrollbar snap-x snap-mandatory items-stretch">
                        {items.map(st => {
@@ -1246,18 +1349,19 @@ export default function App() {
       return a.localeCompare(b);
     });
 
-    const displayPlatform = (sortedPlatforms.length > 0 && !sortedPlatforms.includes(activeTaskPlatform)) ? sortedPlatforms[0] : activeTaskPlatform;
-
-    const activePlatformGroups = tasksByPlatform[displayPlatform] ? Object.values(tasksByPlatform[displayPlatform]).sort((a, b) => {
-      if (b.highestPriorityWeight !== a.highestPriorityWeight) return b.highestPriorityWeight - a.highestPriorityWeight;
-      return a.product.localeCompare(b.product);
-    }) : [];
+    const getPlatformBrand = (plat) => {
+        const p = String(plat).toLowerCase();
+        if (p.includes('shopify') || p.includes('website')) return { color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/50', gradient: 'from-emerald-500/20 to-transparent', ring: 'ring-emerald-500' };
+        if (p.includes('amazon')) return { color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/50', gradient: 'from-orange-500/20 to-transparent', ring: 'ring-orange-500' };
+        if (p.includes('myntra')) return { color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/50', gradient: 'from-rose-500/20 to-transparent', ring: 'ring-rose-500' };
+        return { color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/50', gradient: 'from-purple-500/20 to-transparent', ring: 'ring-purple-500' };
+    };
 
     return (
       <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20 relative">
         
         {/* MEGA DASHBOARD: Sticky Command Bar */}
-        <div className="sticky top-0 z-30 bg-[#0a0a0a]/95 backdrop-blur-xl pt-2 pb-4 border-b border-gray-800 -mx-4 px-4 md:-mx-8 md:px-8">
+        <div className="sticky top-0 z-40 bg-[#0a0a0a]/95 backdrop-blur-xl pt-2 pb-4 border-b border-gray-800 -mx-4 px-4 md:-mx-8 md:px-8">
            
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
               <div>
@@ -1290,16 +1394,6 @@ export default function App() {
                    <ChevronDown size={14} className="absolute right-3 top-3.5 text-gray-500 pointer-events-none"/>
                  </div>
               </div>
-           </div>
-
-           {/* Platform Tabs */}
-           <div className="flex overflow-x-auto gap-2 no-scrollbar pb-1">
-              {sortedPlatforms.length === 0 && <div className="text-gray-600 text-sm italic">No platforms with pending tasks.</div>}
-              {sortedPlatforms.map(plat => (
-                 <button key={plat} onClick={() => setActiveTaskPlatform(plat)} className={`px-6 py-2.5 rounded-full text-sm font-black whitespace-nowrap transition-all border ${displayPlatform === plat ? 'bg-white text-black border-white shadow-[0_0_15px_rgba(255,255,255,0.2)]' : 'bg-[#111] text-gray-400 border-gray-800 hover:border-gray-600 hover:text-white'}`}>
-                    {plat} <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] ${displayPlatform === plat ? 'bg-black text-white' : 'bg-gray-800 text-gray-300'}`}>{Object.keys(tasksByPlatform[plat]).length} Styles</span>
-                 </button>
-              ))}
            </div>
         </div>
 
@@ -1360,132 +1454,175 @@ export default function App() {
 
         {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
 
-        {filteredPendingTasks.length === 0 ? (
+        {sortedPlatforms.length === 0 && filteredPendingTasks.length === 0 && (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-16 text-center max-w-2xl mx-auto mt-12">
              <CheckCircle size={64} className="mx-auto mb-6 text-green-500 opacity-50" />
              <h3 className="text-2xl font-black text-white mb-2">Queue is Empty!</h3>
              <p className="text-gray-500">There are no pending tasks matching your current filters.</p>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-start">
-             {activePlatformGroups.map(group => {
-                const productImage = findProductImage(group.product);
-                const isExpanded = expandedTaskGroup === group.id;
-                const urgencyClass = getUrgencyStyles(group.oldestTask);
-                
-                const priorityStyles = {
-                  '1': 'bg-red-500 text-white border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.3)]',
-                  '2': 'bg-orange-500/90 text-white border-orange-500',
-                  '3': 'bg-black/80 text-white border-gray-600',
-                  '4': 'bg-gray-800 text-gray-400 border-gray-700'
-                };
-                const pBadge = priorityStyles[group.highestPriority] || priorityStyles['3'];
-                
-                return (
-                  <div key={group.id} className={`bg-[#111] border rounded-3xl overflow-hidden flex flex-col shadow-2xl relative transition-all duration-300 ${isExpanded ? 'ring-2 ring-purple-500 scale-[1.02] z-20' : 'hover:border-gray-600 cursor-pointer'} ${urgencyClass}`} onClick={() => !isExpanded && setExpandedTaskGroup(group.id)}>
-                     
-                     <div className="w-full aspect-[4/5] relative bg-black shrink-0 border-b border-gray-800">
-                        {productImage ? (
-                           <img src={productImage} className="absolute inset-0 w-full h-full object-cover opacity-80" />
-                        ) : (
-                           <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>
-                        )}
-                        
-                        <div className="absolute top-4 left-4 z-10">
-                           <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-xs font-black flex items-center gap-1.5 ${pBadge}`}>
-                             {group.highestPriority === '1' && <Flame size={12}/>}
-                             P{group.highestPriority} Priority
-                           </span>
-                        </div>
-
-                        {group.status === 'rejected' && (
-                           <div className="absolute top-4 right-4 z-10">
-                              <span className="bg-rose-500 text-white border border-rose-400 text-xs font-black px-2 py-1 rounded-lg shadow-lg">REJECTED FIX</span>
-                           </div>
-                        )}
-
-                        <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black via-black/80 to-transparent">
-                           <h3 className="text-xl font-black text-white leading-tight line-clamp-2 drop-shadow-md">{group.product}</h3>
-                           <div className="text-sm text-purple-400 font-bold mt-1 uppercase tracking-widest">{group.subTasks.length} Pieces Pending</div>
-                        </div>
-                     </div>
-
-                     {isExpanded ? (
-                        <div className="p-4 bg-[#0a0a0a] flex-1 flex flex-col">
-                           <div className="flex items-center justify-between mb-4">
-                              <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces to start:</div>
-                              <div className="flex gap-2">
-                                 {role === 'admin' && (
-                                    <button onClick={(e) => { e.stopPropagation(); handleClearOutfit(group); }} className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-950/30 px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-900/50 flex items-center gap-1"><Trash2 size={12}/> Clear All</button>
-                                 )}
-                                 <button onClick={(e) => { e.stopPropagation(); setExpandedTaskGroup(null); }} className="text-[10px] text-gray-400 hover:text-white font-black uppercase tracking-widest bg-gray-800 px-3 py-1.5 rounded-lg transition-colors">Close</button>
-                              </div>
-                           </div>
-
-                           <div className="flex flex-col gap-2 w-full mb-6 max-h-60 overflow-y-auto custom-scrollbar pr-1">
-                              {group.subTasks.map(st => (
-                                <div key={st.subId} onClick={(e) => { e.stopPropagation(); toggleSubTaskSelection(st.subId); }} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-purple-900/20 border-purple-500' : 'bg-[#111] border-gray-800 hover:border-gray-600'}`}>
-                                  <div className="flex items-center gap-3">
-                                    <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-purple-500 bg-purple-500' : 'border-gray-600'}`}>
-                                      {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
-                                    </div>
-                                    <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
-                                    {st.assignee && st.assignee !== 'Any' && <span className="text-[9px] bg-purple-900/40 border border-purple-500 text-purple-300 px-1.5 py-0.5 rounded flex items-center gap-1"><UserCheck size={10}/> {st.assignee}</span>}
-                                  </div>
-                                  <div className="flex items-center gap-3">
-                                    {role === 'admin' && (
-                                      cancellingSubId === st.subId ? (
-                                        <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
-                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
-                                          <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                          <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                          <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
-                                            <option value="Shopify / Website">Shopify</option>
-                                            <option value="Amazon">Amazon</option>
-                                            <option value="Myntra">Myntra</option>
-                                          </select>
-                                          <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
-                                            <option value="1">P1</option>
-                                            <option value="2">P2</option>
-                                            <option value="3">P3</option>
-                                            <option value="4">P4</option>
-                                          </select>
-                                          <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
-                                            <Trash2 size={16} />
-                                          </button>
-                                        </div>
-                                      )
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                           </div>
-
-                           <div className="mt-auto pt-4">
-                              {(() => {
-                                 const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
-                                 const hasSelection = selectedSubTasks.length > 0;
-                                 return (
-                                   <button disabled={!hasSelection} onClick={(e) => { e.stopPropagation(); handleStartStitching(group); }} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 disabled:bg-gray-800 disabled:text-gray-500 transition-all shadow-lg shadow-purple-500/20 text-lg flex items-center justify-center gap-2">
-                                     <Scissors size={20}/> {hasSelection ? `Start Stitching (${selectedSubTasks.length})` : 'Select Sizes'}
-                                   </button>
-                                 );
-                              })()}
-                           </div>
-                        </div>
-                     ) : (
-                        <div className="p-4 bg-[#0a0a0a] flex items-center justify-center border-t border-gray-800">
-                           <span className="text-gray-500 font-bold text-sm flex items-center gap-2 group-hover:text-white transition-colors">Tap to Open <ChevronDown size={16}/></span>
-                        </div>
-                     )}
-                  </div>
-                );
-             })}
-          </div>
         )}
+
+        <div className="flex flex-col gap-6 mt-6">
+          {sortedPlatforms.map(plat => {
+             const groups = Object.values(tasksByPlatform[plat]).sort((a, b) => {
+                if (b.highestPriorityWeight !== a.highestPriorityWeight) return b.highestPriorityWeight - a.highestPriorityWeight;
+                return a.product.localeCompare(b.product);
+             });
+             const brand = getPlatformBrand(plat);
+             const taskCount = groups.reduce((sum, g) => sum + g.subTasks.length, 0);
+             const isPlatformExpanded = expandedPlatforms[plat];
+
+             return (
+               <div key={plat} className={`relative flex flex-col w-full border ${brand.border} rounded-3xl bg-[#0a0a0a] overflow-hidden shadow-2xl transition-all duration-300`}>
+                 
+                 {/* THE COLLAPSIBLE PLATFORM HEADER */}
+                 <div 
+                   onClick={() => togglePlatform(plat)}
+                   className={`w-full p-5 border-b ${isPlatformExpanded ? brand.border : 'border-transparent'} bg-gradient-to-r ${brand.gradient} flex items-center justify-between relative z-10 cursor-pointer hover:bg-white/5 transition-colors`}
+                 >
+                    <div className="flex items-center gap-4">
+                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center bg-black border ${brand.border} shadow-2xl shrink-0`}>
+                          <ShoppingBag size={24} className={brand.color}/>
+                       </div>
+                       <div>
+                          <h2 className={`text-2xl md:text-3xl font-black tracking-tight ${brand.color}`}>{plat}</h2>
+                          <div className="text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">
+                             {groups.length} Styles • {taskCount} Pending Pieces
+                          </div>
+                       </div>
+                    </div>
+                    <div className={`w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-white transition-transform duration-300 ${isPlatformExpanded ? 'rotate-180' : ''}`}>
+                       <ChevronDown size={20} />
+                    </div>
+                 </div>
+
+                 {/* THE TASKS FOR THIS LAYER (Hidden if collapsed) */}
+                 {isPlatformExpanded && (
+                   <div className="p-4 md:p-6 bg-black/40 animate-in slide-in-from-top-4 duration-300">
+                      <div className="flex overflow-x-auto gap-6 pb-8 pt-2 px-2 custom-scrollbar snap-x snap-mandatory items-start">
+                         {groups.map(group => {
+                            const productImage = findProductImage(group.product);
+                            const isExpanded = expandedTaskGroup === group.id;
+                            const urgencyClass = getUrgencyStyles(group.oldestTask);
+                            
+                            const priorityStyles = {
+                              '1': 'bg-red-500 text-white border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.3)]',
+                              '2': 'bg-orange-500/90 text-white border-orange-500',
+                              '3': 'bg-black/80 text-white border-gray-600',
+                              '4': 'bg-gray-800 text-gray-400 border-gray-700'
+                            };
+                            const pBadge = priorityStyles[group.highestPriority] || priorityStyles['3'];
+                            
+                            return (
+                              <div key={group.id} className={`shrink-0 snap-start w-[280px] sm:w-[320px] bg-[#111] border rounded-3xl overflow-hidden flex flex-col shadow-2xl relative transition-all duration-300 ${isExpanded ? `ring-2 ${brand.ring} scale-[1.02] z-20` : 'hover:border-gray-600 cursor-pointer'} ${urgencyClass}`} onClick={() => !isExpanded && setExpandedTaskGroup(group.id)}>
+                                 
+                                 <div className="w-full aspect-[4/5] relative bg-black shrink-0 border-b border-gray-800">
+                                    {productImage ? (
+                                       <img src={productImage} className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                                    ) : (
+                                       <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>
+                                    )}
+                                    
+                                    <div className="absolute top-4 left-4 z-10">
+                                       <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-xs font-black flex items-center gap-1.5 ${pBadge}`}>
+                                         {group.highestPriority === '1' && <Flame size={12}/>}
+                                         P{group.highestPriority} Priority
+                                       </span>
+                                    </div>
+
+                                    {group.status === 'rejected' && (
+                                       <div className="absolute top-4 right-4 z-10">
+                                          <span className="bg-rose-500 text-white border border-rose-400 text-xs font-black px-2 py-1 rounded-lg shadow-lg">REJECTED FIX</span>
+                                       </div>
+                                    )}
+
+                                    <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black via-black/80 to-transparent">
+                                       <h3 className="text-xl font-black text-white leading-tight line-clamp-2 drop-shadow-md">{group.product}</h3>
+                                       <div className="text-sm text-purple-400 font-bold mt-1 uppercase tracking-widest">{group.subTasks.length} Pieces Pending</div>
+                                    </div>
+                                 </div>
+
+                                 {isExpanded ? (
+                                    <div className="p-4 bg-[#0a0a0a] flex-1 flex flex-col">
+                                       <div className="flex items-center justify-between mb-4">
+                                          <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces to start:</div>
+                                          <div className="flex gap-2">
+                                             {role === 'admin' && (
+                                                <button onClick={(e) => { e.stopPropagation(); handleClearOutfit(group); }} className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-950/30 px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-900/50 flex items-center gap-1"><Trash2 size={12}/> Clear All</button>
+                                             )}
+                                             <button onClick={(e) => { e.stopPropagation(); setExpandedTaskGroup(null); }} className="text-[10px] text-gray-400 hover:text-white font-black uppercase tracking-widest bg-gray-800 px-3 py-1.5 rounded-lg transition-colors">Close</button>
+                                          </div>
+                                       </div>
+
+                                       <div className="flex flex-col gap-2 w-full mb-6 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                                          {group.subTasks.map(st => (
+                                            <div key={st.subId} onClick={(e) => { e.stopPropagation(); toggleSubTaskSelection(st.subId); }} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-purple-900/20 border-purple-500' : 'bg-[#111] border-gray-800 hover:border-gray-600'}`}>
+                                              <div className="flex items-center gap-3">
+                                                <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-purple-500 bg-purple-500' : 'border-gray-600'}`}>
+                                                  {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
+                                                </div>
+                                                <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
+                                                {st.assignee && st.assignee !== 'Any' && <span className="text-[9px] bg-purple-900/40 border border-purple-500 text-purple-300 px-1.5 py-0.5 rounded flex items-center gap-1"><UserCheck size={10}/> {st.assignee}</span>}
+                                              </div>
+                                              <div className="flex items-center gap-3">
+                                                {role === 'admin' && (
+                                                  cancellingSubId === st.subId ? (
+                                                    <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
+                                                      <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                                      <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                                      <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                                    </div>
+                                                  ) : (
+                                                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                                      <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
+                                                        <option value="Shopify / Website">Shopify</option>
+                                                        <option value="Amazon">Amazon</option>
+                                                        <option value="Myntra">Myntra</option>
+                                                      </select>
+                                                      <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
+                                                        <option value="1">P1</option>
+                                                        <option value="2">P2</option>
+                                                        <option value="3">P3</option>
+                                                        <option value="4">P4</option>
+                                                      </select>
+                                                      <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
+                                                        <Trash2 size={16} />
+                                                      </button>
+                                                    </div>
+                                                  )
+                                                )}
+                                              </div>
+                                            </div>
+                                          ))}
+                                       </div>
+
+                                       <div className="mt-auto pt-4">
+                                          {(() => {
+                                             const selectedSubTasks = group.subTasks.filter(st => selectedSubTaskIds.has(st.subId));
+                                             const hasSelection = selectedSubTasks.length > 0;
+                                             return (
+                                               <button disabled={!hasSelection} onClick={(e) => { e.stopPropagation(); handleStartStitching(group); }} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 disabled:bg-gray-800 disabled:text-gray-500 transition-all shadow-lg shadow-purple-500/20 text-lg flex items-center justify-center gap-2">
+                                                 <Scissors size={20}/> {hasSelection ? `Start Stitching (${selectedSubTasks.length})` : 'Select Sizes'}
+                                               </button>
+                                             );
+                                          })()}
+                                       </div>
+                                    </div>
+                                 ) : (
+                                    <div className="p-4 bg-[#0a0a0a] flex items-center justify-center border-t border-gray-800">
+                                       <span className="text-gray-500 font-bold text-sm flex items-center gap-2 group-hover:text-white transition-colors">Tap to Open <ChevronDown size={16}/></span>
+                                    </div>
+                                 )}
+                              </div>
+                            );
+                         })}
+                      </div>
+                   </div>
+                 )}
+               </div>
+             );
+          })}
+        </div>
       </div>
     );
   };
@@ -1834,6 +1971,195 @@ export default function App() {
     </div>
   );
 
+  const renderStats = () => {
+    // 1. Time Filtering for Stats
+    const now = new Date();
+    let startDate = new Date();
+    if (statsTimeFilter === '7days') startDate.setDate(now.getDate() - 7);
+    else if (statsTimeFilter === '30days') startDate.setDate(now.getDate() - 30);
+    else if (statsTimeFilter === 'thisMonth') startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    else if (statsTimeFilter === 'lastMonth') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      now.setDate(0); // End of last month
+    } else startDate = new Date(0); // All time
+
+    const statEntries = entries.filter(e => new Date(e.date) >= startDate && new Date(e.date) <= now);
+    const prodEntries = statEntries.filter(e => e.type === 'production');
+
+    // 2. High-Level KPIs
+    const totalPieces = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.totalPieces) : 0), 0);
+    const totalValue = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.amount) : 0), 0);
+    
+    const rejectedPieces = prodEntries.filter(e => e.qcStatus === 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
+    const totalAttemptedPieces = totalPieces + rejectedPieces;
+    const qcRejectionRate = totalAttemptedPieces > 0 ? ((rejectedPieces / totalAttemptedPieces) * 100).toFixed(1) : 0;
+
+    // 3. Tailor Leaderboard
+    const tailorStats = tailors.map(t => {
+      const tEntries = prodEntries.filter(e => e.tailor === t && e.qcStatus !== 'rejected');
+      const pieces = tEntries.reduce((sum, e) => sum + Number(e.totalPieces), 0);
+      const value = tEntries.reduce((sum, e) => sum + Number(e.amount), 0);
+      return { name: t, pieces, value };
+    }).sort((a, b) => b.pieces - a.pieces);
+    const topTailorPieces = tailorStats[0]?.pieces || 1; // for progress bar scaling
+
+    // 4. Platform Dominance
+    const platformStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
+      const plat = e.platform || 'Shopify / Website';
+      if (!acc[plat]) acc[plat] = { pieces: 0, value: 0 };
+      acc[plat].pieces += Number(e.totalPieces);
+      acc[plat].value += Number(e.amount);
+      return acc;
+    }, {});
+    const sortedPlatforms = Object.entries(platformStats).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.pieces - a.pieces);
+    const topPlatformPieces = sortedPlatforms[0]?.pieces || 1;
+
+    // 5. Top 5 Best-Selling Styles
+    const productStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
+      const prod = formatProductName(e.product);
+      if (!acc[prod]) acc[prod] = 0;
+      acc[prod] += Number(e.totalPieces);
+      return acc;
+    }, {});
+    const top5Products = Object.entries(productStats)
+      .map(([name, pieces]) => ({ name, pieces }))
+      .sort((a, b) => b.pieces - a.pieces)
+      .slice(0, 5);
+    const maxProductPieces = top5Products[0]?.pieces || 1;
+
+    return (
+      <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+             <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-2"><BarChart3 className="text-[#cdfc4c]"/> Factory Analytics</h2>
+             <p className="text-gray-400 text-sm mt-1">Production metrics and team performance.</p>
+          </div>
+          <select value={statsTimeFilter} onChange={(e) => setStatsTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none cursor-pointer">
+            <option value="7days">Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+            <option value="thisMonth">This Month</option>
+            <option value="lastMonth">Last Month</option>
+            <option value="all">All Time</option>
+          </select>
+        </div>
+
+        {/* KPI Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-[#111] border border-gray-800 p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 bg-[#cdfc4c]/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Total Factory Output</div>
+             <div>
+                <div className="text-5xl font-black text-white tracking-tighter">{totalPieces.toLocaleString()}</div>
+                <div className="text-[#cdfc4c] font-bold text-sm mt-1 flex items-center gap-1"><TrendingUp size={14}/> Approved Pieces</div>
+             </div>
+          </div>
+          <div className="bg-[#111] border border-gray-800 p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Production Value</div>
+             <div>
+                <div className="text-5xl font-black text-white tracking-tighter">₹{totalValue.toLocaleString()}</div>
+                <div className="text-purple-400 font-bold text-sm mt-1">Labor Cost Generated</div>
+             </div>
+          </div>
+          <div className={`border p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden ${qcRejectionRate > 5 ? 'bg-rose-950/20 border-rose-900/50' : 'bg-[#111] border-gray-800'}`}>
+             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Quality Control</div>
+             <div>
+                <div className={`text-5xl font-black tracking-tighter ${qcRejectionRate > 5 ? 'text-rose-500' : 'text-white'}`}>{qcRejectionRate}%</div>
+                <div className={`font-bold text-sm mt-1 flex items-center gap-1 ${qcRejectionRate > 5 ? 'text-rose-400' : 'text-gray-500'}`}>
+                   {qcRejectionRate > 5 ? <AlertTriangle size={14}/> : <CheckCircle size={14}/>} Rejection Rate
+                </div>
+             </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          {/* Top 5 Products */}
+          <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
+             <h3 className="text-white font-black text-xl mb-6">Top 5 Trending Styles</h3>
+             <div className="space-y-5">
+                {top5Products.length === 0 ? <p className="text-gray-600 text-sm italic">No production data in this period.</p> : top5Products.map((p, i) => {
+                   const img = findProductImage(p.name);
+                   const widthPct = Math.max((p.pieces / maxProductPieces) * 100, 5);
+                   return (
+                     <div key={i} className="flex items-center gap-4 group">
+                        <div className="w-6 text-gray-600 font-black text-sm">{i + 1}</div>
+                        {img ? <img src={img} className="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-black shrink-0" /> : <div className="w-12 h-12 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>}
+                        <div className="flex-1 min-w-0">
+                           <div className="flex justify-between items-end mb-1.5">
+                              <span className="text-white font-bold text-sm truncate pr-4">{p.name}</span>
+                              <span className="text-[#cdfc4c] font-black text-sm shrink-0">{p.pieces} pcs</span>
+                           </div>
+                           <div className="w-full bg-gray-900 rounded-full h-2 overflow-hidden">
+                              <div className="bg-[#cdfc4c] h-full rounded-full transition-all duration-1000 ease-out relative overflow-hidden" style={{ width: `${widthPct}%` }}>
+                                 <div className="absolute top-0 left-0 w-full h-full bg-white/20 -skew-x-12 translate-x-[-100%] group-hover:animate-[shimmer_1.5s_infinite]"></div>
+                              </div>
+                           </div>
+                        </div>
+                     </div>
+                   );
+                })}
+             </div>
+          </div>
+
+          <div className="flex flex-col gap-6">
+             {/* Platform Dominance */}
+             <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
+                <h3 className="text-white font-black text-xl mb-6">Platform Distribution</h3>
+                <div className="space-y-4">
+                   {sortedPlatforms.length === 0 ? <p className="text-gray-600 text-sm italic">No data.</p> : sortedPlatforms.map((plat, i) => {
+                      const widthPct = Math.max((plat.pieces / topPlatformPieces) * 100, 5);
+                      let barColor = 'bg-purple-500';
+                      if(plat.name.toLowerCase().includes('shopify')) barColor = 'bg-emerald-500';
+                      if(plat.name.toLowerCase().includes('amazon')) barColor = 'bg-orange-500';
+                      if(plat.name.toLowerCase().includes('myntra')) barColor = 'bg-rose-500';
+
+                      return (
+                        <div key={i} className="flex flex-col gap-1.5">
+                           <div className="flex justify-between items-end">
+                              <span className="text-gray-300 font-bold text-sm flex items-center gap-2"><ShoppingBag size={14} className={barColor.replace('bg-', 'text-')}/> {plat.name}</span>
+                              <span className="text-white font-black text-sm">{plat.pieces} pcs</span>
+                           </div>
+                           <div className="w-full bg-gray-900 rounded-full h-2.5 overflow-hidden">
+                              <div className={`${barColor} h-full rounded-full transition-all duration-1000`} style={{ width: `${widthPct}%` }}></div>
+                           </div>
+                        </div>
+                      )
+                   })}
+                </div>
+             </div>
+
+             {/* Tailor Leaderboard */}
+             <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex-1">
+                <h3 className="text-white font-black text-xl mb-6">Tailor Leaderboard</h3>
+                <div className="space-y-4">
+                   {tailorStats.length === 0 ? <p className="text-gray-600 text-sm italic">No data.</p> : tailorStats.map((t, i) => {
+                      const widthPct = Math.max((t.pieces / topTailorPieces) * 100, 5);
+                      return (
+                        <div key={i} className="flex flex-col gap-1.5 group">
+                           <div className="flex justify-between items-end">
+                              <span className="text-white font-bold text-sm flex items-center gap-2">
+                                {i === 0 && <span className="text-xl">🏆</span>}
+                                {i === 1 && <span className="text-xl">🥈</span>}
+                                {i === 2 && <span className="text-xl">🥉</span>}
+                                {i > 2 && <span className="w-5 text-center text-gray-600 text-xs">{i+1}</span>}
+                                {t.name}
+                              </span>
+                              <span className="text-sky-400 font-black text-sm">{t.pieces} pcs</span>
+                           </div>
+                           <div className="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-sky-500 h-full rounded-full transition-all duration-1000" style={{ width: `${widthPct}%` }}></div>
+                           </div>
+                        </div>
+                      )
+                   })}
+                </div>
+             </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSetup = () => (
     <div className="w-full max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-white">App Configuration</h2><p className="text-gray-400 mt-2">Manage tailor team and product catalog.</p></div>
@@ -2088,8 +2414,6 @@ export default function App() {
         </div>
       )}
 
-      {renderCameraModal()}
-
       {toast && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in">
           <div className={`px-6 py-3 rounded-full shadow-2xl font-bold text-sm tracking-wide ${toast.type === 'error' ? 'bg-rose-500 text-white' : 'bg-[#cdfc4c] text-black'}`}>
@@ -2133,6 +2457,7 @@ export default function App() {
         {activeTab === 'add-batch' && renderAddBatch()}
         {role === 'admin' && (
           <>
+             {activeTab === 'stats' && renderStats()}
              {activeTab === 'ledger' && renderAdminLedger()}
              {activeTab === 'pay' && renderAddPay()}
              {activeTab === 'sign-off' && renderSignOff()}
@@ -2162,7 +2487,10 @@ export default function App() {
 
             {role === 'admin' && (
               <>
-                <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
+                <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'stats' ? 'text-[#cdfc4c]' : 'text-gray-500 hover:text-gray-300'}`}>
+                  <BarChart3 size={20} className={activeTab === 'stats' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Stats</span>
+                </button>
+                <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
                   <Wallet size={20} className={activeTab === 'ledger' ? "opacity-100 scale-110 transition-transform" : "opacity-70"} /><span className="text-[9px] font-black tracking-widest uppercase">Ledger</span>
                 </button>
                 <button onClick={() => { setActiveTab('pay'); setEditingEntryId(null); }} className={`flex flex-col items-center justify-center w-full h-full gap-1.5 transition-colors ${activeTab === 'pay' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
