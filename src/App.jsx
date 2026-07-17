@@ -75,11 +75,11 @@ export default function App() {
   const [expandedPlatforms, setExpandedPlatforms] = useState({});
 
   // Form States
-  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' });
+  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '' });
 
   const [prodForm, setProdForm] = useState({
     date: new Date().toISOString().split('T')[0],
-    tailor: '', product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: 250, platform: 'Shopify / Website'
+    tailor: '', product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: 250, platform: 'Shopify / Website', orderNumber: ''
   });
 
   const [imageFile, setImageFile] = useState(null);
@@ -94,27 +94,31 @@ export default function App() {
   // 🌟 UNIVERSAL CLEANER: Strips accidental URLs out of old saved names
   const formatProductName = (name) => {
     if (!name) return 'Unnamed Item';
-    return String(name).replace(/(https?:\/\/[^\s]+)/g, '').replace(/[\t,:\-\s]+$/, '').trim();
+    let cleanName = String(name);
+    const httpIndex = cleanName.toLowerCase().indexOf('http');
+    if (httpIndex !== -1) {
+        cleanName = cleanName.substring(0, httpIndex);
+    }
+    return cleanName.replace(/[\t,:\-\s]+$/, '').trim();
   };
 
-  // Smart fuzzy matching for images (ignores case and ALL trailing spaces)
+  // Smart fuzzy matching for images
   const findProductImage = (productName) => {
     if (!productName || !products) return null;
-    const cleanName = formatProductName(productName);
-    const cleanSearch = cleanName.toLowerCase().replace(/\s+/g, ' ');
-    const found = products.find(p => p.name.trim().toLowerCase().replace(/\s+/g, ' ') === cleanSearch);
+    const cleanSearch = formatProductName(productName).toLowerCase().replace(/\s+/g, ' ');
+    let found = products.find(p => formatProductName(p.name).toLowerCase().replace(/\s+/g, ' ') === cleanSearch);
     
-    // Fallback just in case the name in config actually includes the URL
     if (!found) {
-        const fallback = products.find(p => p.name.trim().toLowerCase().replace(/\s+/g, ' ') === productName.trim().toLowerCase().replace(/\s+/g, ' '));
-        return fallback ? fallback.image : null;
+        found = products.find(p => {
+           const pName = formatProductName(p.name).toLowerCase().replace(/\s+/g, ' ');
+           return pName.includes(cleanSearch) || cleanSearch.includes(pName);
+        });
     }
-    
     return found ? found.image : null;
   };
 
   const compressImageToBase64 = (file) => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = (event) => {
@@ -122,15 +126,17 @@ export default function App() {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 1200; 
-          const scaleSize = MAX_WIDTH / img.width;
-          canvas.width = MAX_WIDTH;
+          const MAX_WIDTH = 800; 
+          const scaleSize = img.width > MAX_WIDTH ? (MAX_WIDTH / img.width) : 1;
+          canvas.width = img.width * scaleSize;
           canvas.height = img.height * scaleSize;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.85)); 
+          resolve(canvas.toDataURL('image/jpeg', 0.6)); 
         };
+        img.onerror = (e) => reject("Image processing error");
       };
+      reader.onerror = (e) => reject("File reading error");
     });
   };
 
@@ -329,20 +335,27 @@ export default function App() {
     if (videoRef.current && photoCanvasRef.current) {
       const video = videoRef.current;
       const canvas = photoCanvasRef.current;
+      
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+         showToast("Camera initializing, please try again.", "error");
+         return;
+      }
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const MAX_WIDTH = 1200; 
-      const scaleSize = MAX_WIDTH / video.videoWidth;
+      const MAX_WIDTH = 800; 
+      const scaleSize = video.videoWidth > MAX_WIDTH ? (MAX_WIDTH / video.videoWidth) : 1;
+      
       const compressedCanvas = document.createElement('canvas');
-      compressedCanvas.width = MAX_WIDTH;
+      compressedCanvas.width = video.videoWidth * scaleSize;
       compressedCanvas.height = video.videoHeight * scaleSize;
       const compCtx = compressedCanvas.getContext('2d');
       compCtx.drawImage(canvas, 0, 0, compressedCanvas.width, compressedCanvas.height);
       
-      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.85);
+      const base64 = compressedCanvas.toDataURL('image/jpeg', 0.6);
       setImagePreview(base64);
       setImageFile('WEBCAM'); 
       stopCamera();
@@ -381,15 +394,14 @@ export default function App() {
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
     
-    // 🌟 UPGRADED SMART PARSER: Automatically detects URLs no matter how you format the text
     const newProducts = setupForm.productsText.split('\n').map(line => {
       let name = '';
       let image = null;
       
-      const urlMatch = line.match(/(https?:\/\/[^\s]+)/);
-      if (urlMatch) {
-        image = urlMatch[0].trim();
-        name = line.replace(image, '').replace(/[\t,:\-\s]+$/, '').trim();
+      const httpIndex = line.toLowerCase().indexOf('http');
+      if (httpIndex !== -1) {
+        image = line.substring(httpIndex).trim();
+        name = line.substring(0, httpIndex).replace(/[\t,:\-\s]+$/, '').trim();
       } else {
         const parts = line.split(/[\t,]/);
         name = parts[0]?.trim() || '';
@@ -604,7 +616,8 @@ export default function App() {
         product: formatProductName(entry.product),
         sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 },
         pieceRate: entry.pieceRate || 250,
-        platform: entry.platform || 'Shopify / Website'
+        platform: entry.platform || 'Shopify / Website',
+        orderNumber: entry.orderNumber || ''
       });
       if (entry.imageUrl) {
         setImagePreview(entry.imageUrl);
@@ -700,17 +713,19 @@ export default function App() {
           finalImageData = await compressImageToBase64(imageFile);
       }
 
-      // Group selected items by Product Name
+      // Group selected items by Product Name AND Order Number
       const groupedByProduct = selected.reduce((acc, st) => {
         const prodName = formatProductName(st.product || 'Unnamed Item');
-        if (!acc[prodName]) acc[prodName] = [];
-        acc[prodName].push(st);
+        const orderNum = st.orderNumber || '';
+        const groupKey = `${prodName}|||${orderNum}`;
+        if (!acc[groupKey]) acc[groupKey] = [];
+        acc[groupKey].push(st);
         return acc;
       }, {});
 
       if (!useLocalMode) {
-        // Iterate through each distinct product group and create a separate ledger entry
-        for (const [productName, productTasks] of Object.entries(groupedByProduct)) {
+        for (const [groupKey, productTasks] of Object.entries(groupedByProduct)) {
+          const [productName, orderNum] = groupKey.split('|||');
           const firstItem = productTasks[0];
           
           const entryData = {
@@ -718,12 +733,13 @@ export default function App() {
             tailor: tailorName,
             product: productName,
             platform: firstItem.platform || 'Shopify / Website',
+            orderNumber: orderNum,
             sizes: {},
             pieceRate: firstItem.pieceRate || 250,
             type: 'production',
             totalPieces: productTasks.length,
             amount: productTasks.length * (firstItem.pieceRate || 250),
-            imageUrl: finalImageData, // Share the same compressed QC photo
+            imageUrl: finalImageData, 
             qcStatus: 'pending',
             timestamp: new Date().toISOString()
           };
@@ -736,7 +752,6 @@ export default function App() {
           await addDoc(collection(db, 'ledger'), entryData);
         }
 
-        // 🌟 FIX: Smart Splitter for Completing Items
         const tasksById = selected.reduce((acc, st) => {
            if (!acc[st.id]) acc[st.id] = { ...st, selectedQty: 0 };
            acc[st.id].selectedQty += 1;
@@ -764,7 +779,8 @@ export default function App() {
         }
       } else {
         let newEntries = [...entries];
-        for (const [productName, productTasks] of Object.entries(groupedByProduct)) {
+        for (const [groupKey, productTasks] of Object.entries(groupedByProduct)) {
+           const [productName, orderNum] = groupKey.split('|||');
            const firstItem = productTasks[0];
            const entryData = {
               id: crypto.randomUUID(),
@@ -772,6 +788,7 @@ export default function App() {
               tailor: tailorName,
               product: productName,
               platform: firstItem.platform || 'Shopify / Website',
+              orderNumber: orderNum,
               sizes: {},
               pieceRate: firstItem.pieceRate || 250,
               type: 'production',
@@ -808,7 +825,6 @@ export default function App() {
     if (selected.length === 0) return;
     
     if (!useLocalMode) {
-      // 🌟 FIX: Smart Splitter for Starting Items
       const tasksById = selected.reduce((acc, st) => {
          if (!acc[st.id]) acc[st.id] = { ...st, selectedQty: 0 };
          acc[st.id].selectedQty += 1;
@@ -903,7 +919,6 @@ export default function App() {
     return timeFilteredEntries.filter(e => e.tailor === selectedTailorFilter);
   }, [timeFilteredEntries, selectedTailorFilter]);
 
-  // 🌟 NEW: Ledger Search Engine
   const finalLedgerEntries = useMemo(() => {
     let result = [...tailorFilteredEntries];
     if (ledgerFilterType === 'credits') result = result.filter(e => e.type === 'production');
@@ -915,7 +930,8 @@ export default function App() {
           const matchTailor = e.tailor?.toLowerCase().includes(query);
           const matchProduct = e.product?.toLowerCase().includes(query);
           const matchNote = e.note?.toLowerCase().includes(query);
-          return matchTailor || matchProduct || matchNote;
+          const matchOrder = e.orderNumber?.toLowerCase().includes(query);
+          return matchTailor || matchProduct || matchNote || matchOrder;
        });
     }
 
@@ -1199,6 +1215,16 @@ export default function App() {
                                       <div className={`font-black text-lg leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
                                          {formatProductName(st.product)}
                                       </div>
+                                      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                                        <div className="text-[9px] text-purple-200 font-bold bg-purple-900/40 border border-purple-500/30 px-2 py-0.5 rounded uppercase tracking-widest backdrop-blur-sm">
+                                          {st.platform === 'Shopify / Website' ? 'Shopify' : (st.platform || 'Shopify')}
+                                        </div>
+                                        {st.orderNumber && (
+                                          <div className="text-[9px] text-blue-300 font-bold bg-blue-900/40 border border-blue-500/30 px-2 py-0.5 rounded uppercase tracking-widest backdrop-blur-sm">
+                                            Ord: {st.orderNumber}
+                                          </div>
+                                        )}
+                                      </div>
                                     </div>
                                  </div>
                                </div>
@@ -1272,6 +1298,7 @@ export default function App() {
         }
     };
 
+    // 1. Pre-filter by Status + User Settings
     const filteredPendingTasks = tasks.filter(t => {
       const isPendingOrRejected = t.status === 'pending' || t.status === 'rejected';
       if (!isPendingOrRejected) return false;
@@ -1287,6 +1314,7 @@ export default function App() {
       return true;
     });
 
+    // 2. Group into Data Structure
     const tasksByPlatform = filteredPendingTasks.reduce((acc, t) => {
       const plat = t.platform || 'Shopify / Website';
       const taskPriority = getNormalizedPriority(t.priority);
@@ -1321,7 +1349,7 @@ export default function App() {
       }
       
       for (let i = 0; i < qty; i++) {
-        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority, assignee: t.assignee });
+        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority, assignee: t.assignee, orderNumber: t.orderNumber });
       }
       return acc;
     }, {});
@@ -1387,7 +1415,7 @@ export default function App() {
         {role === 'admin' && (
           <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
             <h3 className="text-white font-bold text-sm mb-4 flex items-center gap-2"><Plus size={16} className="text-rose-500"/> Assign Urgent Task</h3>
-            <div className="grid grid-cols-2 lg:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-9 gap-3">
               <div className="col-span-2 relative">
                 <div className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-gray-400 cursor-pointer flex items-center justify-between" onClick={() => setIsTaskProductDropdownOpen(!isTaskProductDropdownOpen)}>
                   <span className="truncate">{taskForm.product || "Select Product..."}</span><ChevronDown size={14}/>
@@ -1417,6 +1445,9 @@ export default function App() {
                 <option value="Amazon">Amazon</option>
                 <option value="Myntra">Myntra</option>
               </select>
+              <div className="relative">
+                 <input type="text" value={taskForm.orderNumber} onChange={(e) => setTaskForm({...taskForm, orderNumber: e.target.value})} placeholder="Order #" className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" title="Order Number (Optional)" />
+              </div>
               <select value={taskForm.size} onChange={(e) => setTaskForm({...taskForm, size: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
                 <option value="">Size</option>{['XS', 'S', 'M', 'L', 'XL'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -1432,8 +1463,8 @@ export default function App() {
               <div className="relative"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
               <button onClick={() => {
                 if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
-                addDoc(collection(db, 'priority_tasks'), { product: formatProductName(taskForm.product), size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, priority: taskForm.priority, status: 'pending', createdAt: new Date().toISOString() });
-                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3' }); showToast("Task Assigned!");
+                addDoc(collection(db, 'priority_tasks'), { product: formatProductName(taskForm.product), size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, priority: taskForm.priority, orderNumber: taskForm.orderNumber, status: 'pending', createdAt: new Date().toISOString() });
+                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '' }); showToast("Task Assigned!");
               }} className="col-span-2 lg:col-span-1 bg-[#cdfc4c] text-black font-black text-sm rounded-lg py-2 hover:bg-[#b5e638]">Add</button>
             </div>
           </div>
@@ -1462,7 +1493,6 @@ export default function App() {
              return (
                <div key={plat} className={`relative flex flex-col w-full border ${brand.border} rounded-3xl bg-[#0a0a0a] overflow-hidden shadow-2xl transition-all duration-300`}>
                  
-                 {/* THE COLLAPSIBLE PLATFORM HEADER */}
                  <div 
                    onClick={() => togglePlatform(plat)}
                    className={`w-full p-5 border-b ${isPlatformExpanded ? brand.border : 'border-transparent'} bg-gradient-to-r ${brand.gradient} flex items-center justify-between relative z-10 cursor-pointer hover:bg-white/5 transition-colors`}
@@ -1483,7 +1513,6 @@ export default function App() {
                     </div>
                  </div>
 
-                 {/* THE TASKS FOR THIS LAYER (Hidden if collapsed) */}
                  {isPlatformExpanded && (
                    <div className="p-4 md:p-6 bg-black/40 animate-in slide-in-from-top-4 duration-300">
                       <div className="flex overflow-x-auto gap-6 pb-8 pt-2 px-2 custom-scrollbar snap-x snap-mandatory items-start">
@@ -1550,19 +1579,33 @@ export default function App() {
                                                 </div>
                                                 <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
                                                 {st.assignee && st.assignee !== 'Any' && <span className="text-[9px] bg-purple-900/40 border border-purple-500 text-purple-300 px-1.5 py-0.5 rounded flex items-center gap-1"><UserCheck size={10}/> {st.assignee}</span>}
+                                                {st.orderNumber && <span className="text-[9px] bg-blue-900/40 border border-blue-500 text-blue-300 px-1.5 py-0.5 rounded flex items-center gap-1">#{st.orderNumber}</span>}
                                               </div>
                                               <div className="flex items-center gap-3">
                                                 {role === 'admin' && (
                                                   cancellingSubId === st.subId ? (
                                                     <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
-                                                      <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
-                                                      <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                                      <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
-                                                    </div>
-                                                  ) : (
-                                                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                                      <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
-                                                        <option value="Shopify / Website">Shopify</option>
+                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                          <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                          <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                          <input 
+                                            type="text" 
+                                            placeholder="Ord #" 
+                                            defaultValue={st.orderNumber || ''} 
+                                            onBlur={(e) => {
+                                              if (e.target.value !== (st.orderNumber || '')) {
+                                                 updateTaskField(st.id, 'orderNumber', e.target.value);
+                                              }
+                                            }}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                                            className="bg-black border border-gray-700 text-[10px] text-blue-300 font-bold py-1 px-2 rounded outline-none w-14 sm:w-16 hover:border-blue-500/50 transition-colors"
+                                            title="Add/Edit Order Number"
+                                          />
+                                          <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
+                                            <option value="Shopify / Website">Shopify</option>
                                                         <option value="Amazon">Amazon</option>
                                                         <option value="Myntra">Myntra</option>
                                                       </select>
@@ -1619,7 +1662,7 @@ export default function App() {
       <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Log' : 'Log Stitched Batch'}</h2><p className="text-gray-400 mt-2">Record daily production turnaround.</p></div>
       <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
         <form onSubmit={handleProdSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor</label>
               <select value={prodForm.tailor} onChange={(e) => setProdForm({...prodForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none appearance-none">
@@ -1633,6 +1676,10 @@ export default function App() {
                 <option value="Amazon">Amazon</option>
                 <option value="Myntra">Myntra</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Order # (Optional)</label>
+              <input type="text" value={prodForm.orderNumber} onChange={(e) => setProdForm({...prodForm, orderNumber: e.target.value})} placeholder="e.g. #1024" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
             </div>
             <div>
               <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Date</label>
@@ -1689,67 +1736,6 @@ export default function App() {
       </div>
     </div>
   );
-
-  const renderAddPay = () => {
-    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
-    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
-    
-    return (
-      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
-        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
-          <form onSubmit={handlePaySubmit} className="space-y-6">
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
-                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
-                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
-                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
-              </div>
-            </div>
-
-            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
-               <div className="flex items-center gap-2 mb-4">
-                 <CalendarRange size={18} className="text-sky-400" />
-                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
-               </div>
-               
-               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
-                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
-                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-               </div>
-
-               {payForm.tailor ? (
-                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div>
-                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
-                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
-                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
-                    </div>
-                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
-                       Auto-Fill ₹{periodEarned}
-                    </button>
-                 </div>
-               ) : (
-                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
-               )}
-            </div>
-
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
-            
-            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
-          </form>
-        </div>
-      </div>
-    );
-  };
 
   const renderStats = () => {
     const now = new Date();
@@ -1856,19 +1842,17 @@ export default function App() {
                    const img = findProductImage(p.name);
                    const widthPct = Math.max((p.pieces / maxProductPieces) * 100, 5);
                    return (
-                     <div key={i} className="flex items-center gap-4 group">
-                        <div className="w-6 text-gray-600 font-black text-sm">{i + 1}</div>
-                        {img ? <img src={img} className="w-12 h-12 rounded-xl object-cover border border-gray-700 bg-black shrink-0" /> : <div className="w-12 h-12 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600" /></div>}
-                        <div className="flex-1 min-w-0">
-                           <div className="flex justify-between items-end mb-1.5">
-                              <span className="text-white font-bold text-sm truncate pr-4">{p.name}</span>
-                              <span className="text-[#cdfc4c] font-black text-sm shrink-0">{p.pieces} pcs</span>
+                     <div key={i} className="flex flex-col gap-2 group">
+                        <div className="flex items-center gap-4">
+                           <div className="w-6 text-gray-600 font-black text-sm">{i + 1}</div>
+                           {img ? <img src={img} className="w-10 h-10 rounded-xl object-cover bg-black border border-gray-700 shrink-0"/> : <div className="w-10 h-10 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600"/></div>}
+                           <div className="flex-1 min-w-0">
+                              <div className="text-white font-bold text-sm truncate">{p.name}</div>
+                              <div className="text-gray-500 text-xs mt-0.5">{p.pieces} pieces stitched</div>
                            </div>
-                           <div className="w-full bg-gray-900 rounded-full h-2 overflow-hidden">
-                              <div className="bg-[#cdfc4c] h-full rounded-full transition-all duration-1000 ease-out relative overflow-hidden" style={{ width: `${widthPct}%` }}>
-                                 <div className="absolute top-0 left-0 w-full h-full bg-white/20 -skew-x-12 translate-x-[-100%] group-hover:animate-[shimmer_1.5s_infinite]"></div>
-                              </div>
-                           </div>
+                        </div>
+                        <div className="w-full bg-gray-900 rounded-full h-1.5 ml-10 overflow-hidden max-w-[calc(100%-2.5rem)]">
+                           <div className="bg-[#cdfc4c] h-full rounded-full transition-all duration-1000" style={{ width: `${widthPct}%` }}></div>
                         </div>
                      </div>
                    );
@@ -1935,6 +1919,67 @@ export default function App() {
     );
   };
 
+  const renderAddPay = () => {
+    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
+    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
+    
+    return (
+      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
+        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
+          <form onSubmit={handlePaySubmit} className="space-y-6">
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
+                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
+                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
+                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
+              </div>
+            </div>
+
+            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
+               <div className="flex items-center gap-2 mb-4">
+                 <CalendarRange size={18} className="text-sky-400" />
+                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
+               </div>
+               
+               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
+                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
+                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+               </div>
+
+               {payForm.tailor ? (
+                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div>
+                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
+                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
+                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
+                    </div>
+                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
+                       Auto-Fill ₹{periodEarned}
+                    </button>
+                 </div>
+               ) : (
+                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
+               )}
+            </div>
+
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
+            
+            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
   const renderAdminLedger = () => (
     <div className="w-full space-y-6 animate-in fade-in duration-500 pb-20">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -1954,7 +1999,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Top Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="md:col-span-2 bg-gradient-to-br from-[#cdfc4c] to-[#a3d827] rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_30px_rgba(205,252,76,0.15)] relative overflow-hidden">
           <div className="absolute top-0 right-0 w-48 h-48 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
@@ -1984,10 +2028,8 @@ export default function App() {
         </div>
       </div>
 
-      {/* Ledger Controls & Data */}
       <div className="mt-8">
         
-        {/* Sleek Filter Bar */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-[#111] p-4 rounded-2xl border border-gray-800">
            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
               <select value={ledgerViewMode} onChange={(e) => setLedgerViewMode(e.target.value)} className="bg-black border border-gray-700 text-sm font-bold text-white py-2 px-4 rounded-xl outline-none cursor-pointer focus:ring-2 focus:ring-[#cdfc4c]">
@@ -2018,7 +2060,6 @@ export default function App() {
            </div>
         </div>
         
-        {/* Dynamic High-Volume Render */}
         <div className="w-full">
           {ledgerViewMode === 'detailed' ? (
             finalLedgerEntries.length === 0 ? (
@@ -2034,7 +2075,6 @@ export default function App() {
                     return (
                       <div key={entry.id} className={`flex flex-col lg:flex-row gap-4 lg:items-center justify-between p-4 rounded-2xl border transition-all shadow-md ${isReject ? 'bg-rose-950/10 border-rose-900/40 opacity-80' : 'bg-[#111] border-gray-800 hover:border-gray-600'}`}>
                          
-                         {/* Section 1: Identity & Date */}
                          <div className="flex items-center gap-3 min-w-[200px]">
                             <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold shrink-0 ${entry.type === 'payment' ? 'bg-sky-900/20 text-sky-400 border border-sky-900/50' : 'bg-gray-800 text-gray-400'}`}>
                                {entry.type === 'payment' ? <Wallet size={20}/> : <User size={20}/>}
@@ -2045,7 +2085,6 @@ export default function App() {
                             </div>
                          </div>
 
-                         {/* Section 2: Details */}
                          <div className="flex-1 flex items-center gap-4 bg-black/20 p-3 rounded-xl border border-white/5">
                             {entry.type === 'production' ? (
                                <>
@@ -2056,6 +2095,7 @@ export default function App() {
                                        <span className="bg-gray-800 text-gray-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.totalPieces} pcs @ ₹{entry.pieceRate}</span>
                                        <span className="bg-purple-900/30 text-purple-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.platform || 'Shopify'}</span>
                                        {entry.sizes && <span className="bg-blue-900/30 text-blue-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">Sizes: {Object.entries(entry.sizes).filter(([_,q])=>Number(q)>0).map(([s,q])=>`${s}:${q}`).join(', ')}</span>}
+                                       {entry.orderNumber && <span className="bg-emerald-900/30 text-emerald-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">Ord: {entry.orderNumber}</span>}
                                     </div>
                                  </div>
                                </>
@@ -2067,7 +2107,6 @@ export default function App() {
                             )}
                          </div>
 
-                         {/* Section 3: Financials */}
                          <div className="min-w-[120px] text-left lg:text-right px-2 lg:px-4">
                             <div className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">{entry.type === 'production' ? 'Earned Value' : 'Amount Paid'}</div>
                             <div className={`text-2xl font-black tracking-tight ${entry.type === 'production' ? (isReject ? 'text-gray-600 line-through' : 'text-[#cdfc4c]') : 'text-sky-400'}`}>
@@ -2075,7 +2114,6 @@ export default function App() {
                             </div>
                          </div>
 
-                         {/* Section 4: Actions & QC */}
                          <div className="flex flex-col lg:items-end justify-center gap-2 min-w-[200px] border-t lg:border-t-0 lg:border-l border-gray-800 pt-4 lg:pt-0 lg:pl-6">
                             
                             {entry.type === 'production' && (
@@ -2228,7 +2266,6 @@ export default function App() {
   const renderSignOff = () => {
     const targetTailor = selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter;
     
-    // Filter entries by Date Range & Tailor
     const rangeLogs = entries.filter(e => {
       const d = new Date(e.date);
       const start = new Date(signOffStartDate);
@@ -2244,7 +2281,6 @@ export default function App() {
     const piecesPeriod = periodProduction.reduce((sum, e) => sum + Number(e.totalPieces), 0);
     const periodBalance = earnedPeriod - paidPeriod;
 
-    // Helper to format sizes clearly
     const formatSizes = (sizes) => {
       if (!sizes) return '';
       const activeSizes = Object.entries(sizes).filter(([_, qty]) => Number(qty) > 0);
@@ -2255,7 +2291,6 @@ export default function App() {
     return (
       <div className="w-full max-w-3xl mx-auto pb-12 print:pb-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* Dynamic Print Styles for A4 vs Thermal */}
         <style>
           {`
             @media print {
