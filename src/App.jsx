@@ -279,19 +279,14 @@ export default function App() {
       } catch (err) { setUseLocalMode(true); loadLocalData(); }
     };
 
-    const timeoutId = setTimeout(() => {
-        if (loading) { setUseLocalMode(true); loadLocalData(); }
-    }, 5000);
-
     fetchFirebaseDirectly();
 
     return () => {
-      clearTimeout(timeoutId);
       if (unsubscribeLedger) unsubscribeLedger();
       if (unsubscribeConfig) unsubscribeConfig();
       if (unsubscribeTasks) unsubscribeTasks();
     };
-  }, [loading]);
+  }, []);
 
   // 🌟 Auto-open first platform when tasks load
   useEffect(() => {
@@ -369,12 +364,18 @@ export default function App() {
     setIsCameraOpen(false);
   };
 
-  const forceLocalMode = () => {
-    setUseLocalMode(true);
-    const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
-    setEntries(localLedger);
-    setLoading(false);
-    showToast("Switched to Local Offline Mode", "error");
+  const toggleNetworkMode = () => {
+    const nextMode = !useLocalMode;
+    setUseLocalMode(nextMode);
+    if (nextMode) {
+      const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
+      setEntries(localLedger);
+      setLoading(false);
+      showToast("Switched to Local Offline Mode", "error");
+    } else {
+      showToast("Switched to Cloud Mode. Refreshing...", "success");
+      setTimeout(() => window.location.reload(), 1000);
+    }
   };
 
   const handleLogin = (selectedRole) => {
@@ -1589,8 +1590,8 @@ export default function App() {
                                           <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
                                           <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
                                         </div>
-                                      ) : (
-                                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                                  ) : (
+                                                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                                           <input 
                                             type="text" 
                                             placeholder="Ord #" 
@@ -2434,7 +2435,7 @@ export default function App() {
       <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c] z-50">
         <RefreshCw className="animate-spin mb-4" size={32} />
         <div className="font-bold tracking-widest text-sm uppercase">Loading Cloud Data</div>
-        {useLocalMode && <button onClick={forceLocalMode} className="mt-8 text-gray-500 hover:text-white text-xs underline font-mono">Force Offline Mode</button>}
+        <button onClick={toggleNetworkMode} className="mt-8 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-bold tracking-widest uppercase transition-colors shadow-lg">Work Offline (Local Mode)</button>
       </div>
     );
   }
@@ -2480,10 +2481,14 @@ export default function App() {
             </div>
             <h1 className="text-xl font-black tracking-tight text-white hidden sm:block">Poshakh</h1>
             {role === 'admin' && (
-              <span className="flex items-center gap-1.5 px-3 py-1 bg-[#cdfc4c] text-black text-[10px] font-black tracking-widest uppercase rounded-full">
+              <button 
+                onClick={toggleNetworkMode}
+                className={`flex items-center gap-1.5 px-3 py-1 text-[10px] font-black tracking-widest uppercase rounded-full cursor-pointer transition-colors border shadow-lg ${useLocalMode ? 'bg-yellow-500/20 text-yellow-500 border-yellow-500/50 hover:bg-yellow-500 hover:text-black' : 'bg-[#cdfc4c] text-black border-[#cdfc4c] hover:bg-[#b5e638]'}`}
+                title="Toggle Network Mode"
+              >
                 <RefreshCw size={10} className={useLocalMode ? "" : "animate-spin-slow"} /> 
                 {useLocalMode ? 'LOCAL MODE' : 'CLOUD ACTIVE'}
-              </span>
+              </button>
             )}
           </div>
           <div className="flex items-center gap-4">
