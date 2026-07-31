@@ -11,7 +11,6 @@ import {
   deleteDoc, doc, setDoc, updateDoc 
 } from 'firebase/firestore';
 
-// Your Real Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyBciTbw1cvMD6au0PZw7k-rfdRlUNHea18",
   authDomain: "tailordaily.firebaseapp.com",
@@ -25,7 +24,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Custom Poshakh Brand Logo Component
 const PoshakhLogo = ({ size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <circle cx="12" cy="7" r="5.5" fill="#9b1c1c" />
@@ -37,19 +35,16 @@ const PoshakhLogo = ({ size = 20 }) => (
 const ADMIN_PIN = "1234";
 
 export default function App() {
-  // --- AUTH & ROLES ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null); 
   const [loginStep, setLoginStep] = useState('select'); 
   const [pinInput, setPinInput] = useState('');
   
-  // --- CORE STATE ---
   const [entries, setEntries] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [tailors, setTailors] = useState([]);
   const [products, setProducts] = useState([]);
   
-  // UI & Network State
   const [activeTab, setActiveTab] = useState('ledger');
   const [selectedTailorFilter, setSelectedTailorFilter] = useState('All');
   const [loading, setLoading] = useState(true);
@@ -66,7 +61,6 @@ export default function App() {
   const [isTaskProductDropdownOpen, setIsTaskProductDropdownOpen] = useState(false); 
   const [productSearch, setProductSearch] = useState('');
   
-  // Task UI State
   const [expandedTaskGroup, setExpandedTaskGroup] = useState(null);
   const [selectedSubTaskIds, setSelectedSubTaskIds] = useState(new Set());
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
@@ -74,7 +68,6 @@ export default function App() {
   const [taskFilterOption, setTaskFilterOption] = useState('All');
   const [expandedPlatforms, setExpandedPlatforms] = useState({});
 
-  // Form States
   const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '' });
 
   const [prodForm, setProdForm] = useState({
@@ -82,16 +75,16 @@ export default function App() {
     tailor: '', product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: 250, platform: 'Shopify / Website', orderNumber: ''
   });
 
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  // 3-IMAGE QC SYSTEM STATES
+  const [imageFiles, setImageFiles] = useState({ chest: null, waist: null, hip: null });
+  const [imagePreviews, setImagePreviews] = useState({ chest: null, waist: null, hip: null });
+  const [activeCameraSlot, setActiveCameraSlot] = useState(null);
   const [lightboxData, setLightboxData] = useState(null);
 
-  // WebRTC Camera States
   const videoRef = useRef(null);
   const photoCanvasRef = useRef(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
-  // 🌟 UNIVERSAL CLEANER: Strips accidental URLs out of old saved names
   const formatProductName = (name) => {
     if (!name) return 'Unnamed Item';
     let cleanName = String(name);
@@ -102,7 +95,6 @@ export default function App() {
     return cleanName.replace(/[\t,:\-\s]+$/, '').trim();
   };
 
-  // Smart fuzzy matching for images
   const findProductImage = (productName) => {
     if (!productName || !products) return null;
     const cleanSearch = formatProductName(productName).toLowerCase().replace(/\s+/g, ' ');
@@ -161,7 +153,6 @@ export default function App() {
   const [setupForm, setSetupForm] = useState({ tailorsText: '', productsText: '' });
   const [reportForm, setReportForm] = useState({ type: 'ledger', startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0], tailor: 'All' });
 
-  // Formatting & Sorting
   const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
   const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
   const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
@@ -177,7 +168,6 @@ export default function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
-  // --- THE GHOST-TASK BLACKLIST ENGINE ---
   const getBlacklist = () => JSON.parse(localStorage.getItem('poshakh_blacklist') || '[]');
   const addToBlacklist = (ids) => {
       const current = getBlacklist();
@@ -186,7 +176,6 @@ export default function App() {
       return newBlacklist;
   };
 
-  // Fullscreen Listener
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
@@ -216,7 +205,9 @@ export default function App() {
       setIsLoggedIn(true);
       if (savedRole === 'staff') setActiveTab('tasks');
     }
+  }, []);
 
+  useEffect(() => {
     let unsubscribeLedger;
     let unsubscribeConfig;
     let unsubscribeTasks;
@@ -239,6 +230,11 @@ export default function App() {
       setLoading(false);
     };
 
+    if (useLocalMode) {
+       loadLocalData();
+       return;
+    }
+
     const fetchFirebaseDirectly = async () => {
       try {
         await signInAnonymously(auth);
@@ -248,7 +244,10 @@ export default function App() {
           data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setEntries(data);
           setLoading(false);
-        }, (err) => { setUseLocalMode(true); loadLocalData(); });
+        }, (err) => { 
+          console.error("Firebase connection error", err); 
+          // Re-enable if needed, but manual mode is better for now
+        });
 
         unsubscribeConfig = onSnapshot(doc(db, 'config', 'setup'), (docSnap) => {
           if (docSnap.exists()) {
@@ -276,7 +275,9 @@ export default function App() {
           setTasks(activeTasks);
         });
 
-      } catch (err) { setUseLocalMode(true); loadLocalData(); }
+      } catch (err) { 
+        console.error("Auth error", err);
+      }
     };
 
     fetchFirebaseDirectly();
@@ -286,9 +287,8 @@ export default function App() {
       if (unsubscribeConfig) unsubscribeConfig();
       if (unsubscribeTasks) unsubscribeTasks();
     };
-  }, []);
+  }, [useLocalMode]);
 
-  // 🌟 Auto-open first platform when tasks load
   useEffect(() => {
     if (tasks.length > 0 && Object.keys(expandedPlatforms).length === 0) {
       const platformsPresent = new Set();
@@ -313,7 +313,8 @@ export default function App() {
      }));
   };
 
-  const startCamera = async () => {
+  const startCamera = async (slot) => {
+    setActiveCameraSlot(slot);
     setIsCameraOpen(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
@@ -323,11 +324,12 @@ export default function App() {
     } catch (err) {
       showToast("Camera access denied or unavailable.", "error");
       setIsCameraOpen(false);
+      setActiveCameraSlot(null);
     }
   };
 
   const takePhoto = () => {
-    if (videoRef.current && photoCanvasRef.current) {
+    if (videoRef.current && photoCanvasRef.current && activeCameraSlot) {
       const video = videoRef.current;
       const canvas = photoCanvasRef.current;
       
@@ -351,8 +353,9 @@ export default function App() {
       compCtx.drawImage(canvas, 0, 0, compressedCanvas.width, compressedCanvas.height);
       
       const base64 = compressedCanvas.toDataURL('image/jpeg', 0.6);
-      setImagePreview(base64);
-      setImageFile('WEBCAM'); 
+      
+      setImagePreviews(prev => ({ ...prev, [activeCameraSlot]: base64 }));
+      setImageFiles(prev => ({ ...prev, [activeCameraSlot]: 'WEBCAM' }));
       stopCamera();
     }
   };
@@ -362,20 +365,14 @@ export default function App() {
       videoRef.current.srcObject.getTracks().forEach(track => track.stop());
     }
     setIsCameraOpen(false);
+    setActiveCameraSlot(null);
   };
 
   const toggleNetworkMode = () => {
     const nextMode = !useLocalMode;
     setUseLocalMode(nextMode);
-    if (nextMode) {
-      const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
-      setEntries(localLedger);
-      setLoading(false);
-      showToast("Switched to Local Offline Mode", "error");
-    } else {
-      showToast("Switched to Cloud Mode. Refreshing...", "success");
-      setTimeout(() => window.location.reload(), 1000);
-    }
+    if (nextMode) showToast("Switched to Local Offline Mode", "error");
+    else showToast("Reconnecting to Cloud...", "success");
   };
 
   const handleLogin = (selectedRole) => {
@@ -394,11 +391,8 @@ export default function App() {
 
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
-    
     const newProducts = setupForm.productsText.split('\n').map(line => {
-      let name = '';
-      let image = null;
-      
+      let name = ''; let image = null;
       const httpIndex = line.toLowerCase().indexOf('http');
       if (httpIndex !== -1) {
         image = line.substring(httpIndex).trim();
@@ -408,7 +402,6 @@ export default function App() {
         name = parts[0]?.trim() || '';
         image = parts[1]?.trim() || null;
       }
-      
       return { name, image };
     }).filter(p => p.name);
 
@@ -430,7 +423,6 @@ export default function App() {
       const dateMatch = d >= start && d <= end; const tailorMatch = reportForm.tailor === 'All' || e.tailor === reportForm.tailor;
       return dateMatch && tailorMatch;
     });
-
     if (filtered.length === 0) return showToast("No data found.", "error");
 
     let csvContent = ""; let filename = `poshakh_${reportForm.type}_${reportForm.startDate}_to_${reportForm.endDate}.csv`;
@@ -440,11 +432,8 @@ export default function App() {
       filtered.forEach(e => {
         const type = e.type === 'production' ? 'Production' : 'Payment'; 
         const product = e.product ? `"${formatProductName(e.product)}"` : ''; 
-        const qty = e.totalPieces || ''; 
-        const rate = e.pieceRate || '';
-        const platform = e.platform || 'Shopify / Website';
-        const credit = e.type === 'production' ? e.amount : ''; 
-        const debit = e.type === 'payment' ? e.amount : ''; 
+        const qty = e.totalPieces || ''; const rate = e.pieceRate || ''; const platform = e.platform || 'Shopify / Website';
+        const credit = e.type === 'production' ? e.amount : ''; const debit = e.type === 'payment' ? e.amount : ''; 
         const note = e.note ? `"${e.note}"` : '';
         csvContent += `${e.date},${e.tailor},${type},${platform},${product},${qty},${rate},${credit},${debit},${note}\n`;
       });
@@ -463,12 +452,9 @@ export default function App() {
       csvContent = "Platform,Product,Total Pieces Stitched,Total Value\n";
       const productStats = {};
       filtered.filter(e => e.type === 'production').forEach(e => {
-        const plat = e.platform || 'Shopify / Website';
-        const safeProduct = formatProductName(e.product);
-        const key = `${safeProduct}-${plat}`;
+        const plat = e.platform || 'Shopify / Website'; const safeProduct = formatProductName(e.product); const key = `${safeProduct}-${plat}`;
         if (!productStats[key]) productStats[key] = { product: safeProduct, platform: plat, pieces: 0, value: 0 };
-        productStats[key].pieces += Number(e.totalPieces); 
-        productStats[key].value += Number(e.amount);
+        productStats[key].pieces += Number(e.totalPieces); productStats[key].value += Number(e.amount);
       });
       Object.values(productStats).forEach(stats => csvContent += `"${stats.platform}","${stats.product}",${stats.pieces},${stats.value}\n`);
     }
@@ -491,23 +477,27 @@ export default function App() {
     const ctx = canvasRef.current.getContext('2d'); const coords = getCoordinates(e); if(!coords) return;
     ctx.beginPath(); ctx.moveTo(coords.x, coords.y); setIsDrawing(true);
   };
-
+  
   const draw = (e) => {
     if (!isDrawing || signatureLocked || !canvasRef.current) return; e.preventDefault();
     const ctx = canvasRef.current.getContext('2d'); const coords = getCoordinates(e); if(!coords) return;
     ctx.lineTo(coords.x, coords.y); ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
   };
-
+  
   const stopDrawing = () => setIsDrawing(false);
   const clearSignature = () => {
     if (!canvasRef.current) return;
     canvasRef.current.getContext('2d').clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); setSignatureLocked(false);
   };
+  
   useEffect(() => { clearSignature(); }, [signOffStartDate, signOffEndDate]);
 
-  const handleImageChange = (e) => {
+  const handleImageChange = (e, slot) => {
     const file = e.target.files[0];
-    if (file) { setImageFile(file); setImagePreview(URL.createObjectURL(file)); }
+    if (file) { 
+      setImageFiles(prev => ({...prev, [slot]: file})); 
+      setImagePreviews(prev => ({...prev, [slot]: URL.createObjectURL(file)})); 
+    }
   };
 
   const handleProdSizeChange = (size, value) => {
@@ -517,24 +507,32 @@ export default function App() {
 
   const handleProdSubmit = async (e) => {
     e.preventDefault();
-    
     if (!prodForm.tailor) return showToast("Missing: Please select a Tailor.", "error");
     if (!prodForm.product) return showToast("Missing: Please select a Product.", "error");
 
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
     if (totalPieces === 0) return showToast("Missing: Enter at least 1 piece in the sizes section.", "error");
     
-    if (!imagePreview) return showToast("Missing: Please attach a QC Photo!", "error");
+    if (!imagePreviews.chest || !imagePreviews.waist || !imagePreviews.hip) {
+       return showToast("Missing: Please attach all 3 QC Photos (Chest, Waist, Hip)!", "error");
+    }
 
     setIsUploading(true);
 
     try {
-      let finalImageData = null;
-      if (imageFile === 'WEBCAM') finalImageData = imagePreview;
-      else if (imageFile && !useLocalMode) finalImageData = await compressImageToBase64(imageFile);
-      else if (editingEntryId && !imageFile) {
-         const existingEntry = entries.find(e => e.id === editingEntryId);
-         if(existingEntry) finalImageData = existingEntry.imageUrl;
+      const finalImageUrls = { chest: null, waist: null, hip: null };
+      
+      for (const slot of ['chest', 'waist', 'hip']) {
+         if (imageFiles[slot] === 'WEBCAM') finalImageUrls[slot] = imagePreviews[slot];
+         else if (imageFiles[slot] && !useLocalMode) finalImageUrls[slot] = await compressImageToBase64(imageFiles[slot]);
+         else if (imageFiles[slot] && useLocalMode) finalImageUrls[slot] = imagePreviews[slot]; 
+         else if (editingEntryId && !imageFiles[slot]) {
+            const existingEntry = entries.find(e => e.id === editingEntryId);
+            if (existingEntry) {
+               if (existingEntry.imageUrls) finalImageUrls[slot] = existingEntry.imageUrls[slot];
+               else if (slot === 'chest') finalImageUrls[slot] = existingEntry.imageUrl; 
+            }
+         }
       }
 
       const existingStatus = editingEntryId ? entries.find(e => e.id === editingEntryId)?.qcStatus : 'pending';
@@ -545,7 +543,7 @@ export default function App() {
         type: 'production',
         totalPieces,
         amount: totalPieces * prodForm.pieceRate,
-        imageUrl: finalImageData,
+        imageUrls: finalImageUrls, 
         qcStatus: existingStatus || 'pending',
         timestamp: new Date().toISOString()
       };
@@ -561,7 +559,9 @@ export default function App() {
       }
       
       showToast(editingEntryId ? "Log Updated Successfully!" : "Sent to Admin for QC Review!");
-      setEditingEntryId(null); setImageFile(null); setImagePreview(null);
+      setEditingEntryId(null); 
+      setImageFiles({ chest: null, waist: null, hip: null }); 
+      setImagePreviews({ chest: null, waist: null, hip: null });
       setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
       if (role === 'admin') setActiveTab('ledger');
     } catch (err) { 
@@ -602,31 +602,22 @@ export default function App() {
     setEditingEntryId(entry.id);
     if (entry.type === 'payment') {
       setPayForm({
-        date: entry.date || new Date().toISOString().split('T')[0],
-        tailor: entry.tailor || '',
-        amount: entry.amount || '',
-        note: entry.note || '',
-        periodStart: entry.periodStart || lastCycle.start,
-        periodEnd: entry.periodEnd || lastCycle.end
+        date: entry.date || new Date().toISOString().split('T')[0], tailor: entry.tailor || '', amount: entry.amount || '', note: entry.note || '', periodStart: entry.periodStart || lastCycle.start, periodEnd: entry.periodEnd || lastCycle.end
       });
       setActiveTab('pay');
     } else {
       setProdForm({
-        date: entry.date || new Date().toISOString().split('T')[0],
-        tailor: entry.tailor || '',
-        product: formatProductName(entry.product),
-        sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 },
-        pieceRate: entry.pieceRate || 250,
-        platform: entry.platform || 'Shopify / Website',
-        orderNumber: entry.orderNumber || ''
+        date: entry.date || new Date().toISOString().split('T')[0], tailor: entry.tailor || '', product: formatProductName(entry.product), sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: entry.pieceRate || 250, platform: entry.platform || 'Shopify / Website', orderNumber: entry.orderNumber || ''
       });
-      if (entry.imageUrl) {
-        setImagePreview(entry.imageUrl);
-        setImageFile(null);
+      
+      if (entry.imageUrls) {
+         setImagePreviews(entry.imageUrls);
+      } else if (entry.imageUrl) {
+         setImagePreviews({ chest: entry.imageUrl, waist: null, hip: null });
       } else {
-        setImagePreview(null);
-        setImageFile(null);
+         setImagePreviews({ chest: null, waist: null, hip: null });
       }
+      setImageFiles({ chest: null, waist: null, hip: null });
       setActiveTab('add-batch');
     }
   };
@@ -634,26 +625,17 @@ export default function App() {
   const deleteEntry = async (id) => {
     if (useLocalMode) {
       const newEntries = entries.filter(e => e.id !== id);
-      setEntries(newEntries);
-      syncLocal('poshakh_ledger', newEntries);
+      setEntries(newEntries); syncLocal('poshakh_ledger', newEntries);
     } else {
-      try {
-        await deleteDoc(doc(db, 'ledger', id));
-      } catch (error) {
-        console.error("Failed to delete entry:", error);
-        showToast("Failed to delete entry", "error");
-        return;
-      }
+      try { await deleteDoc(doc(db, 'ledger', id)); } catch (error) { showToast("Failed to delete entry", "error"); return; }
     }
-    setDeletingId(null);
-    showToast("Entry deleted!");
+    setDeletingId(null); showToast("Entry deleted!");
   };
 
   const confirmRejectBatch = async (entry) => {
     if (useLocalMode) return;
     await updateDoc(doc(db, 'ledger', entry.id), { qcStatus: 'rejected' });
-    setRejectingId(null);
-    showToast("Batch Rejected!");
+    setRejectingId(null); showToast("Batch Rejected!");
   };
 
   const handleApproveBatch = async (entry) => {
@@ -667,9 +649,7 @@ export default function App() {
     addToBlacklist(ids);
     setTasks(prev => prev.filter(t => !ids.includes(t.id)));
     if (!useLocalMode) {
-      ids.forEach(async id => {
-        try { await updateDoc(doc(db, 'priority_tasks', id), { status: 'cancelled', quantity: 0 }); } catch(e) {}
-      });
+      ids.forEach(async id => { try { await updateDoc(doc(db, 'priority_tasks', id), { status: 'cancelled', quantity: 0 }); } catch(e) {} });
     }
     showToast("Outfit Cleared!");
   };
@@ -677,8 +657,7 @@ export default function App() {
   const toggleSubTaskSelection = (subId) => {
     setSelectedSubTaskIds(prev => {
       const newSet = new Set(prev);
-      if (newSet.has(subId)) newSet.delete(subId);
-      else newSet.add(subId);
+      if (newSet.has(subId)) newSet.delete(subId); else newSet.add(subId);
       return newSet;
     });
   };
@@ -687,7 +666,6 @@ export default function App() {
     if (useLocalMode) return;
     const originalDoc = tasks.find(t => t.id === taskId);
     if (!originalDoc) return;
-    
     const origQty = Number(originalDoc.quantity) || 1;
     if (origQty <= 1) {
         await updateDoc(doc(db, 'priority_tasks', taskId), { status: 'pending', startedBy: null, startedAt: null });
@@ -700,21 +678,24 @@ export default function App() {
   };
 
   const handleCompleteLiveSelection = async (e, tailorName, items) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
-    if (selected.length === 0 || !imagePreview) return;
+    if (selected.length === 0) return;
+    
+    if (!imagePreviews.chest || !imagePreviews.waist || !imagePreviews.hip) {
+        return showToast("Missing: Please attach all 3 QC Photos (Chest, Waist, Hip)!", "error");
+    }
+
     setIsUploading(true);
     
     try {
-      let finalImageData = null;
-      if (imageFile === 'WEBCAM') {
-          finalImageData = imagePreview;
-      } else if (imageFile && !useLocalMode) {
-          finalImageData = await compressImageToBase64(imageFile);
+      const finalImageUrls = { chest: null, waist: null, hip: null };
+      for (const slot of ['chest', 'waist', 'hip']) {
+         if (imageFiles[slot] === 'WEBCAM') finalImageUrls[slot] = imagePreviews[slot];
+         else if (imageFiles[slot] && !useLocalMode) finalImageUrls[slot] = await compressImageToBase64(imageFiles[slot]);
+         else if (imageFiles[slot] && useLocalMode) finalImageUrls[slot] = imagePreviews[slot]; 
       }
 
-      // Group selected items by Product Name AND Order Number
       const groupedByProduct = selected.reduce((acc, st) => {
         const prodName = formatProductName(st.product || 'Unnamed Item');
         const orderNum = st.orderNumber || '';
@@ -740,7 +721,7 @@ export default function App() {
             type: 'production',
             totalPieces: productTasks.length,
             amount: productTasks.length * (firstItem.pieceRate || 250),
-            imageUrl: finalImageData, 
+            imageUrls: finalImageUrls, 
             qcStatus: 'pending',
             timestamp: new Date().toISOString()
           };
@@ -762,7 +743,6 @@ export default function App() {
         for (const [origId, data] of Object.entries(tasksById)) {
            const originalDoc = tasks.find(t => t.id === origId);
            if (!originalDoc) continue;
-
            const origQty = Number(originalDoc.quantity) || 1;
            const selQty = data.selectedQty;
 
@@ -771,11 +751,7 @@ export default function App() {
            } else {
               const { id, ...taskDataWithoutId } = originalDoc;
               await updateDoc(doc(db, 'priority_tasks', origId), { quantity: origQty - selQty });
-              await addDoc(collection(db, 'priority_tasks'), { 
-                  ...taskDataWithoutId, 
-                  quantity: selQty, 
-                  status: 'completed' 
-              });
+              await addDoc(collection(db, 'priority_tasks'), { ...taskDataWithoutId, quantity: selQty, status: 'completed' });
            }
         }
       } else {
@@ -785,19 +761,11 @@ export default function App() {
            const firstItem = productTasks[0];
            const entryData = {
               id: crypto.randomUUID(),
-              date: new Date().toISOString().split('T')[0],
-              tailor: tailorName,
-              product: productName,
-              platform: firstItem.platform || 'Shopify / Website',
-              orderNumber: orderNum,
-              sizes: {},
-              pieceRate: firstItem.pieceRate || 250,
-              type: 'production',
-              totalPieces: productTasks.length,
-              amount: productTasks.length * (firstItem.pieceRate || 250),
-              imageUrl: finalImageData,
-              qcStatus: 'pending',
-              timestamp: new Date().toISOString()
+              date: new Date().toISOString().split('T')[0], tailor: tailorName, product: productName,
+              platform: firstItem.platform || 'Shopify / Website', orderNumber: orderNum,
+              sizes: {}, pieceRate: firstItem.pieceRate || 250, type: 'production',
+              totalPieces: productTasks.length, amount: productTasks.length * (firstItem.pieceRate || 250),
+              imageUrls: finalImageUrls, qcStatus: 'pending', timestamp: new Date().toISOString()
            };
            productTasks.forEach(st => {
               if(!entryData.sizes[st.size]) entryData.sizes[st.size] = 0;
@@ -805,13 +773,12 @@ export default function App() {
            });
            newEntries = [entryData, ...newEntries];
         }
-        setEntries(newEntries);
-        syncLocal('poshakh_ledger', newEntries);
+        setEntries(newEntries); syncLocal('poshakh_ledger', newEntries);
       }
 
       setSelectedSubTaskIds(new Set());
-      setImageFile(null);
-      setImagePreview(null);
+      setImageFiles({ chest: null, waist: null, hip: null });
+      setImagePreviews({ chest: null, waist: null, hip: null });
       showToast("Stitching completed and logged!");
       if (role === 'staff') setActiveTab('tasks');
     } catch(err) {
@@ -846,27 +813,15 @@ export default function App() {
         const selQty = data.selectedQty;
 
         if (selQty >= origQty) {
-           await updateDoc(doc(db, 'priority_tasks', origId), { 
-             status: 'in_progress', 
-             startedBy: startedByName, 
-             startedAt: new Date().toISOString() 
-           });
+           await updateDoc(doc(db, 'priority_tasks', origId), { status: 'in_progress', startedBy: startedByName, startedAt: new Date().toISOString() });
         } else {
            const { id, ...taskDataWithoutId } = originalDoc;
            await updateDoc(doc(db, 'priority_tasks', origId), { quantity: origQty - selQty });
-           await addDoc(collection(db, 'priority_tasks'), { 
-               ...taskDataWithoutId, 
-               quantity: selQty, 
-               status: 'in_progress', 
-               startedBy: startedByName, 
-               startedAt: new Date().toISOString() 
-           });
+           await addDoc(collection(db, 'priority_tasks'), { ...taskDataWithoutId, quantity: selQty, status: 'in_progress', startedBy: startedByName, startedAt: new Date().toISOString() });
         }
       }
     }
-    setSelectedSubTaskIds(new Set());
-    setActiveTab('live');
-    showToast("Started stitching!");
+    setSelectedSubTaskIds(new Set()); setActiveTab('live'); showToast("Started stitching!");
   };
 
   const executeCancelSubTask = async (st) => {
@@ -889,18 +844,13 @@ export default function App() {
             }
         }
     }
-    setCancellingSubId(null);
-    showToast("Piece removed!");
+    setCancellingSubId(null); showToast("Piece removed!");
   };
 
   const toggleFullScreen = () => {
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(err => {
-        console.log(`Error attempting to enable fullscreen: ${err.message}`);
-      });
-    } else {
-      document.exitFullscreen();
-    }
+      document.documentElement.requestFullscreen().catch(err => { console.log(`Error attempting to enable fullscreen: ${err.message}`); });
+    } else { document.exitFullscreen(); }
   };
 
   const timeFilteredEntries = useMemo(() => {
@@ -958,15 +908,12 @@ export default function App() {
   
   const unpaidPieces = useMemo(() => {
     if (pendingBalance <= 0) return 0;
-    let balanceLeft = pendingBalance;
-    let piecesToCover = 0;
+    let balanceLeft = pendingBalance; let piecesToCover = 0;
     const recentProduction = [...entries].filter(e => e.type === 'production' && e.qcStatus !== 'rejected' && (selectedTailorFilter === 'All' || e.tailor === selectedTailorFilter)).sort((a, b) => new Date(b.date) - new Date(a.date));
 
     for (const item of recentProduction) {
       if (balanceLeft <= 0) break;
-      const rate = Number(item.pieceRate) || 250;
-      const piecesInItem = Number(item.totalPieces) || 0;
-      const valueOfItem = piecesInItem * rate;
+      const rate = Number(item.pieceRate) || 250; const piecesInItem = Number(item.totalPieces) || 0; const valueOfItem = piecesInItem * rate;
       if (balanceLeft >= valueOfItem) { piecesToCover += piecesInItem; balanceLeft -= valueOfItem; } 
       else { piecesToCover += balanceLeft / rate; balanceLeft = 0; }
     }
@@ -1068,12 +1015,17 @@ export default function App() {
     if (!isCameraOpen) return null;
     return (
       <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in">
+        <div className="absolute top-8 left-0 w-full text-center z-10 pointer-events-none">
+            <span className="bg-black/80 backdrop-blur-md text-white px-6 py-3 rounded-full text-sm font-black uppercase tracking-widest border border-gray-700 shadow-2xl">
+                Snap {activeCameraSlot} Photo
+            </span>
+        </div>
         <div className="w-full max-w-lg bg-[#111] rounded-3xl overflow-hidden border border-gray-800 flex flex-col relative shadow-2xl">
            <video ref={videoRef} autoPlay playsInline className="w-full h-auto bg-black aspect-video object-cover" />
            <canvas ref={photoCanvasRef} className="hidden" />
            <div className="p-6 flex gap-4 bg-[#111]">
               <button onClick={stopCamera} className="flex-1 py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-xl transition-colors">Cancel</button>
-              <button onClick={takePhoto} className="flex-1 py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black rounded-xl flex justify-center items-center gap-2 transition-colors"><Camera size={18}/> Snap Photo</button>
+              <button onClick={takePhoto} className="flex-1 py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black rounded-xl flex justify-center items-center gap-2 transition-colors"><Camera size={18}/> Snap</button>
            </div>
         </div>
       </div>
@@ -1082,27 +1034,37 @@ export default function App() {
 
   const renderPhotoUploader = () => (
     <div className="pt-4 border-t border-gray-800">
-      <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-3 text-center">Quality Control Photo (Required)</label>
+      <label className="block text-[10px] uppercase tracking-widest font-black text-gray-400 mb-4 text-center">QC Photos (3 Required)</label>
       
-      {!imagePreview ? (
-        <div className="flex flex-col md:flex-row gap-3">
-          <div className="relative w-full md:flex-1 h-14 bg-black border-2 border-dashed border-gray-800 rounded-xl flex items-center justify-center overflow-hidden hover:border-[#cdfc4c] transition-colors cursor-pointer group">
-            <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-            <span className="text-gray-500 font-bold text-xs flex items-center gap-2 group-hover:text-[#cdfc4c]"><ImageIcon size={16}/> Upload / Phone Cam</span>
-          </div>
-          <button type="button" onClick={startCamera} className="w-full md:flex-1 h-14 bg-gray-900 hover:bg-gray-800 border-2 border-dashed border-gray-800 hover:border-sky-500 rounded-xl flex items-center justify-center gap-2 text-gray-400 font-bold text-xs transition-colors">
-            <Camera size={16} /> Desktop Webcam
-          </button>
-        </div>
-      ) : (
-        <div className="relative w-full h-48 bg-black rounded-xl border border-[#cdfc4c] overflow-hidden flex items-center justify-center shadow-lg shadow-[#cdfc4c]/10">
-           <img src={imagePreview} className="absolute inset-0 w-full h-full object-cover opacity-90" />
-           <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
-              <button type="button" onClick={() => { setImagePreview(null); setImageFile(null); }} className="px-5 py-3 bg-rose-500 hover:bg-rose-600 transition-colors text-white font-black tracking-wide rounded-xl text-xs flex items-center gap-2 shadow-2xl"><Trash2 size={16}/> Remove Photo</button>
+      <div className="grid grid-cols-3 gap-3">
+        {['chest', 'waist', 'hip'].map(slot => (
+           <div key={slot} className="flex flex-col gap-2">
+               <div className="text-[10px] uppercase tracking-widest font-bold text-gray-500 text-center">{slot}</div>
+               {!imagePreviews[slot] ? (
+                  <div className="flex flex-col gap-2">
+                      <label className="w-full h-12 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative">
+                          <input type="file" accept="image/*" capture="environment" onChange={(e) => handleImageChange(e, slot)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                          <ImageIcon size={16}/>
+                      </label>
+                      <button type="button" onClick={() => startCamera(slot)} className="w-full h-12 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors">
+                          <Camera size={16}/>
+                      </button>
+                  </div>
+               ) : (
+                  <div className="relative w-full h-28 bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10">
+                      <img src={imagePreviews[slot]} className="w-full h-full object-cover opacity-80" />
+                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button type="button" onClick={() => {
+                              setImagePreviews(p => ({...p, [slot]: null}));
+                              setImageFiles(p => ({...p, [slot]: null}));
+                          }} className="p-2.5 bg-rose-500 hover:bg-rose-600 transition-colors text-white rounded-full shadow-lg"><Trash2 size={16}/></button>
+                      </div>
+                      <div className="absolute bottom-1 right-1 bg-[#cdfc4c] text-black text-[9px] font-black px-1.5 py-0.5 rounded shadow flex items-center gap-1"><CheckCircle size={10}/></div>
+                  </div>
+               )}
            </div>
-           <div className="absolute bottom-3 right-3 bg-[#cdfc4c] text-black text-[10px] font-black px-3 py-1.5 rounded-lg shadow-lg flex items-center gap-1.5"><CheckCircle size={12}/> Attached</div>
-        </div>
-      )}
+        ))}
+      </div>
     </div>
   );
 
@@ -1121,7 +1083,6 @@ export default function App() {
     return (
       <div className={`w-full ${isFullscreen ? 'max-w-none' : ''} space-y-6 animate-in fade-in`}>
         
-        {/* KIOSK HEADER */}
         <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 mb-8 relative ${isFullscreen ? 'p-6 bg-[#111] border-b border-gray-800 sticky top-0 z-40 shadow-xl' : 'px-4'}`}>
            <div className="text-left flex-1 w-full flex flex-col sm:flex-row items-start sm:items-center gap-4">
              <div>
@@ -1179,7 +1140,6 @@ export default function App() {
                      )}
                   </div>
 
-                  {/* MEGA HORIZONTAL ROW */}
                   <div className="p-6 bg-[#0a0a0a]/50">
                     <div className="flex overflow-x-auto gap-5 pb-6 custom-scrollbar snap-x snap-mandatory items-stretch">
                        {items.map(st => {
@@ -1253,10 +1213,10 @@ export default function App() {
                          {(() => {
                             const selectedSubTasks = items.filter(st => selectedSubTaskIds.has(st.subId));
                             const hasSelection = selectedSubTasks.length > 0;
-                            const canSubmit = hasSelection && imagePreview;
+                            const canSubmit = hasSelection && imagePreviews.chest && imagePreviews.waist && imagePreviews.hip;
                             return (
                               <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className="w-full py-5 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-xl">
-                                {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!imagePreview ? 'Add QC Photo to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
+                                {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!canSubmit ? 'Add All 3 QC Photos to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
                               </button>
                             );
                          })()}
@@ -1299,7 +1259,6 @@ export default function App() {
         }
     };
 
-    // 1. Pre-filter by Status + User Settings
     const filteredPendingTasks = tasks.filter(t => {
       const isPendingOrRejected = t.status === 'pending' || t.status === 'rejected';
       if (!isPendingOrRejected) return false;
@@ -1315,7 +1274,6 @@ export default function App() {
       return true;
     });
 
-    // 2. Group into Data Structure
     const tasksByPlatform = filteredPendingTasks.reduce((acc, t) => {
       const plat = t.platform || 'Shopify / Website';
       const taskPriority = getNormalizedPriority(t.priority);
@@ -1376,7 +1334,6 @@ export default function App() {
     return (
       <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20 relative">
         
-        {/* MEGA DASHBOARD: Sticky Command Bar */}
         <div className="sticky top-0 z-30 bg-[#0a0a0a]/95 backdrop-blur-xl pt-2 pb-4 border-b border-gray-800 -mx-4 px-4 md:-mx-8 md:px-8">
            
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
@@ -1586,27 +1543,27 @@ export default function App() {
                                                 {role === 'admin' && (
                                                   cancellingSubId === st.subId ? (
                                                     <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
-                                          <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
-                                          <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                          <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
-                                        </div>
+                                                      <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                                      <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                                      <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                                    </div>
                                                   ) : (
                                                     <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                          <input 
-                                            type="text" 
-                                            placeholder="Ord #" 
-                                            defaultValue={st.orderNumber || ''} 
-                                            onBlur={(e) => {
-                                              if (e.target.value !== (st.orderNumber || '')) {
-                                                 updateTaskField(st.id, 'orderNumber', e.target.value);
-                                              }
-                                            }}
-                                            onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                                            className="bg-black border border-gray-700 text-[10px] text-blue-300 font-bold py-1 px-2 rounded outline-none w-14 sm:w-16 hover:border-blue-500/50 transition-colors"
-                                            title="Add/Edit Order Number"
-                                          />
-                                          <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
-                                            <option value="Shopify / Website">Shopify</option>
+                                                      <input 
+                                                        type="text" 
+                                                        placeholder="Ord #" 
+                                                        defaultValue={st.orderNumber || ''} 
+                                                        onBlur={(e) => {
+                                                          if (e.target.value !== (st.orderNumber || '')) {
+                                                             updateTaskField(st.id, 'orderNumber', e.target.value);
+                                                          }
+                                                        }}
+                                                        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                                                        className="bg-black border border-gray-700 text-[10px] text-blue-300 font-bold py-1 px-2 rounded outline-none w-14 sm:w-16 hover:border-blue-500/50 transition-colors"
+                                                        title="Add/Edit Order Number"
+                                                      />
+                                                      <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
+                                                        <option value="Shopify / Website">Shopify</option>
                                                         <option value="Amazon">Amazon</option>
                                                         <option value="Myntra">Myntra</option>
                                                       </select>
@@ -1805,7 +1762,6 @@ export default function App() {
           </select>
         </div>
 
-        {/* KPI Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-[#111] border border-gray-800 p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden">
              <div className="absolute top-0 right-0 w-32 h-32 bg-[#cdfc4c]/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
@@ -1835,7 +1791,6 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-          {/* Top 5 Products */}
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
              <h3 className="text-white font-black text-xl mb-6">Top 5 Trending Styles</h3>
              <div className="space-y-5">
@@ -1862,7 +1817,6 @@ export default function App() {
           </div>
 
           <div className="flex flex-col gap-6">
-             {/* Platform Dominance */}
              <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
                 <h3 className="text-white font-black text-xl mb-6">Platform Distribution</h3>
                 <div className="space-y-4">
@@ -1888,7 +1842,6 @@ export default function App() {
                 </div>
              </div>
 
-             {/* Tailor Leaderboard */}
              <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex-1">
                 <h3 className="text-white font-black text-xl mb-6">Tailor Leaderboard</h3>
                 <div className="space-y-4">
@@ -2131,8 +2084,8 @@ export default function App() {
                             )}
                             
                             <div className="flex items-center gap-2 w-full lg:justify-end mt-1">
-                               {entry.imageUrl && (
-                                  <button onClick={() => setLightboxData({ url: entry.imageUrl, timestamp: entry.timestamp, tailor: entry.tailor, product: formatProductName(entry.product) })} className="px-3 py-2 text-xs font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 border border-blue-900/50 hover:bg-blue-500 hover:text-white rounded-xl flex items-center justify-center gap-1.5 transition-colors flex-1 lg:flex-none"><Camera size={14}/> View QC</button>
+                               {(entry.imageUrls || entry.imageUrl) && (
+                                  <button onClick={() => setLightboxData({ urls: entry.imageUrls || { old_photo: entry.imageUrl }, timestamp: entry.timestamp, tailor: entry.tailor, product: formatProductName(entry.product) })} className="px-3 py-2 text-xs font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 border border-blue-900/50 hover:bg-blue-500 hover:text-white rounded-xl flex items-center justify-center gap-1.5 transition-colors flex-1 lg:flex-none"><Camera size={14}/> View QC</button>
                                )}
                                <button onClick={() => startEdit(entry)} className="p-2 text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors border border-gray-700" title="Edit"><Edit2 size={16}/></button>
                                
@@ -2435,7 +2388,11 @@ export default function App() {
       <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c] z-50">
         <RefreshCw className="animate-spin mb-4" size={32} />
         <div className="font-bold tracking-widest text-sm uppercase">Loading Cloud Data</div>
-        <button onClick={toggleNetworkMode} className="mt-8 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-bold tracking-widest uppercase transition-colors shadow-lg">Work Offline (Local Mode)</button>
+        {useLocalMode ? null : (
+          <button onClick={() => setUseLocalMode(true)} className="mt-8 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-bold transition-colors">
+            Work Offline (Local Mode)
+          </button>
+        )}
       </div>
     );
   }
@@ -2446,13 +2403,22 @@ export default function App() {
     <div className={`min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden ${isFullscreen ? 'pb-0' : 'pb-28 md:pb-28'}`}>
       
       {lightboxData && (
-        <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in" onClick={() => setLightboxData(null)}>
-          <div className="relative max-w-5xl max-h-[90vh] w-full flex flex-col items-center">
-            <button className="absolute -top-12 right-0 text-white hover:text-rose-500 transition-colors bg-black/50 p-2 rounded-full z-50" onClick={() => setLightboxData(null)}>
+        <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center animate-in fade-in" onClick={() => setLightboxData(null)}>
+          <div className="relative w-full max-w-6xl max-h-[100vh] flex flex-col items-center justify-center h-full">
+            <button className="absolute top-4 right-4 text-white hover:text-rose-500 transition-colors bg-black/50 p-3 rounded-full z-50 shadow-2xl backdrop-blur-md" onClick={() => setLightboxData(null)}>
                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
-            <img src={lightboxData.url} className="w-full h-full max-h-[80vh] object-contain rounded-xl shadow-2xl" onClick={(e) => e.stopPropagation()}/>
-            <div className="mt-4 bg-[#111] border border-gray-800 rounded-xl p-4 text-center w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            
+            <div className="flex overflow-x-auto gap-4 w-full p-4 md:p-8 snap-x snap-mandatory custom-scrollbar items-center">
+                {Object.entries(lightboxData.urls).filter(([_, url]) => url).map(([slot, url]) => (
+                    <div key={slot} className="shrink-0 w-[85vw] md:w-[45vw] lg:w-[30vw] snap-center flex flex-col items-center">
+                        <div className="bg-[#cdfc4c] text-black text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-4 shadow-lg">{slot} Measurement</div>
+                        <img src={url} className="w-full max-h-[60vh] object-contain rounded-2xl shadow-2xl bg-black/50 border border-gray-800" onClick={(e) => e.stopPropagation()}/>
+                    </div>
+                ))}
+            </div>
+
+            <div className="mt-2 bg-[#111] border border-gray-800 rounded-xl p-4 text-center w-full max-w-md shadow-2xl shrink-0" onClick={(e) => e.stopPropagation()}>
                <div className="text-white font-bold text-lg">{lightboxData.product}</div>
                <div className="text-gray-400 text-sm mt-1">Stitched by <span className="text-[#cdfc4c] font-bold">{lightboxData.tailor}</span></div>
                <div className="text-gray-500 text-xs mt-2 flex items-center justify-center gap-1.5">
