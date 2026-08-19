@@ -68,14 +68,13 @@ export default function App() {
   const [taskFilterOption, setTaskFilterOption] = useState('All');
   const [expandedPlatforms, setExpandedPlatforms] = useState({});
 
-  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '' });
+  const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '', workType: 'Both' });
 
   const [prodForm, setProdForm] = useState({
     date: new Date().toISOString().split('T')[0],
-    tailor: '', product: '', sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: 250, platform: 'Shopify / Website', orderNumber: ''
+    tailor: '', product: '', sizes: { XXS: 0, XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 }, pieceRate: 250, platform: 'Shopify / Website', orderNumber: '', workType: 'Both'
   });
 
-  // 3-IMAGE QC SYSTEM STATES
   const [imageFiles, setImageFiles] = useState({ chest: null, waist: null, hip: null });
   const [imagePreviews, setImagePreviews] = useState({ chest: null, waist: null, hip: null });
   const [activeCameraSlot, setActiveCameraSlot] = useState(null);
@@ -246,7 +245,6 @@ export default function App() {
           setLoading(false);
         }, (err) => { 
           console.error("Firebase connection error", err); 
-          // Re-enable if needed, but manual mode is better for now
         });
 
         unsubscribeConfig = onSnapshot(doc(db, 'config', 'setup'), (docSnap) => {
@@ -513,8 +511,14 @@ export default function App() {
     const totalPieces = Object.values(prodForm.sizes).reduce((sum, val) => sum + val, 0);
     if (totalPieces === 0) return showToast("Missing: Enter at least 1 piece in the sizes section.", "error");
     
-    if (!imagePreviews.chest || !imagePreviews.waist || !imagePreviews.hip) {
-       return showToast("Missing: Please attach all 3 QC Photos (Chest, Waist, Hip)!", "error");
+    const isCutOnly = prodForm.workType === 'Cut';
+
+    if (isCutOnly) {
+       if (!imagePreviews.chest) return showToast("Missing: Please attach a Fabric Proof photo!", "error");
+    } else {
+       if (!imagePreviews.chest || !imagePreviews.waist || !imagePreviews.hip) {
+          return showToast("Missing: Please attach all 3 QC Photos (Chest, Waist, Hip)!", "error");
+       }
     }
 
     setIsUploading(true);
@@ -522,7 +526,9 @@ export default function App() {
     try {
       const finalImageUrls = { chest: null, waist: null, hip: null };
       
-      for (const slot of ['chest', 'waist', 'hip']) {
+      const slotsToProcess = isCutOnly ? ['chest'] : ['chest', 'waist', 'hip'];
+
+      for (const slot of slotsToProcess) {
          if (imageFiles[slot] === 'WEBCAM') finalImageUrls[slot] = imagePreviews[slot];
          else if (imageFiles[slot] && !useLocalMode) finalImageUrls[slot] = await compressImageToBase64(imageFiles[slot]);
          else if (imageFiles[slot] && useLocalMode) finalImageUrls[slot] = imagePreviews[slot]; 
@@ -557,12 +563,34 @@ export default function App() {
         if (editingEntryId) await updateDoc(doc(db, 'ledger', editingEntryId), entryData);
         else await addDoc(collection(db, 'ledger'), entryData);
       }
+
+      // AUTO-SPAWN STITCH TASK IF CUT ONLY
+      if (!editingEntryId && isCutOnly && !useLocalMode) {
+         for(const [size, qty] of Object.entries(prodForm.sizes)) {
+             const numQty = Number(qty);
+             if(numQty > 0) {
+                 await addDoc(collection(db, 'priority_tasks'), {
+                     product: formatProductName(prodForm.product),
+                     size: size,
+                     quantity: numQty,
+                     pieceRate: 120,
+                     platform: prodForm.platform,
+                     assignee: 'Any',
+                     priority: '3',
+                     orderNumber: prodForm.orderNumber,
+                     status: 'pending',
+                     workType: 'Stitch',
+                     createdAt: new Date().toISOString()
+                 });
+             }
+         }
+      }
       
       showToast(editingEntryId ? "Log Updated Successfully!" : "Sent to Admin for QC Review!");
       setEditingEntryId(null); 
       setImageFiles({ chest: null, waist: null, hip: null }); 
       setImagePreviews({ chest: null, waist: null, hip: null });
-      setProdForm(prev => ({ ...prev, sizes: { XS: 0, S: 0, M: 0, L: 0, XL: 0 } }));
+      setProdForm(prev => ({ ...prev, sizes: { XXS: 0, XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 } }));
       if (role === 'admin') setActiveTab('ledger');
     } catch (err) { 
       console.error("Firebase Add Batch Error:", err);
@@ -607,7 +635,14 @@ export default function App() {
       setActiveTab('pay');
     } else {
       setProdForm({
-        date: entry.date || new Date().toISOString().split('T')[0], tailor: entry.tailor || '', product: formatProductName(entry.product), sizes: entry.sizes || { XS: 0, S: 0, M: 0, L: 0, XL: 0 }, pieceRate: entry.pieceRate || 250, platform: entry.platform || 'Shopify / Website', orderNumber: entry.orderNumber || ''
+        date: entry.date || new Date().toISOString().split('T')[0], 
+        tailor: entry.tailor || '', 
+        product: formatProductName(entry.product), 
+        sizes: entry.sizes || { XXS: 0, XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 }, 
+        pieceRate: entry.pieceRate || 250, 
+        platform: entry.platform || 'Shopify / Website', 
+        orderNumber: entry.orderNumber || '',
+        workType: entry.workType || 'Both'
       });
       
       if (entry.imageUrls) {
@@ -681,16 +716,25 @@ export default function App() {
     e.preventDefault(); e.stopPropagation();
     const selected = items.filter(st => selectedSubTaskIds.has(st.subId));
     if (selected.length === 0) return;
+
+    const firstSelectedItem = selected[0];
+    const isCutOnly = firstSelectedItem.workType === 'Cut';
     
-    if (!imagePreviews.chest || !imagePreviews.waist || !imagePreviews.hip) {
-        return showToast("Missing: Please attach all 3 QC Photos (Chest, Waist, Hip)!", "error");
+    if (isCutOnly) {
+       if (!imagePreviews.chest) return showToast("Missing: Please attach Fabric Proof photo!", "error");
+    } else {
+       if (!imagePreviews.chest || !imagePreviews.waist || !imagePreviews.hip) {
+           return showToast("Missing: Please attach all 3 QC Photos (Chest, Waist, Hip)!", "error");
+       }
     }
 
     setIsUploading(true);
     
     try {
       const finalImageUrls = { chest: null, waist: null, hip: null };
-      for (const slot of ['chest', 'waist', 'hip']) {
+      const slotsToProcess = isCutOnly ? ['chest'] : ['chest', 'waist', 'hip'];
+
+      for (const slot of slotsToProcess) {
          if (imageFiles[slot] === 'WEBCAM') finalImageUrls[slot] = imagePreviews[slot];
          else if (imageFiles[slot] && !useLocalMode) finalImageUrls[slot] = await compressImageToBase64(imageFiles[slot]);
          else if (imageFiles[slot] && useLocalMode) finalImageUrls[slot] = imagePreviews[slot]; 
@@ -718,6 +762,7 @@ export default function App() {
             orderNumber: orderNum,
             sizes: {},
             pieceRate: firstItem.pieceRate || 250,
+            workType: firstItem.workType || 'Both',
             type: 'production',
             totalPieces: productTasks.length,
             amount: productTasks.length * (firstItem.pieceRate || 250),
@@ -753,6 +798,22 @@ export default function App() {
               await updateDoc(doc(db, 'priority_tasks', origId), { quantity: origQty - selQty });
               await addDoc(collection(db, 'priority_tasks'), { ...taskDataWithoutId, quantity: selQty, status: 'completed' });
            }
+
+           // AUTO SPAWN ENGINE - CUT TO STITCH
+           if (data.workType === 'Cut') {
+              const { id, ...spawndata } = originalDoc;
+              await addDoc(collection(db, 'priority_tasks'), {
+                  ...spawndata,
+                  quantity: selQty,
+                  status: 'pending',
+                  workType: 'Stitch',
+                  pieceRate: 120, // Override base piece rate for new stitch task
+                  startedBy: null,
+                  startedAt: null,
+                  assignee: 'Any', // Ensure it gets thrown back to pool for Admin
+                  createdAt: new Date().toISOString()
+              });
+           }
         }
       } else {
         let newEntries = [...entries];
@@ -764,6 +825,7 @@ export default function App() {
               date: new Date().toISOString().split('T')[0], tailor: tailorName, product: productName,
               platform: firstItem.platform || 'Shopify / Website', orderNumber: orderNum,
               sizes: {}, pieceRate: firstItem.pieceRate || 250, type: 'production',
+              workType: firstItem.workType || 'Both',
               totalPieces: productTasks.length, amount: productTasks.length * (firstItem.pieceRate || 250),
               imageUrls: finalImageUrls, qcStatus: 'pending', timestamp: new Date().toISOString()
            };
@@ -779,7 +841,7 @@ export default function App() {
       setSelectedSubTaskIds(new Set());
       setImageFiles({ chest: null, waist: null, hip: null });
       setImagePreviews({ chest: null, waist: null, hip: null });
-      showToast("Stitching completed and logged!");
+      showToast("Work completed and logged!");
       if (role === 'staff') setActiveTab('tasks');
     } catch(err) {
       console.error(err);
@@ -821,7 +883,7 @@ export default function App() {
         }
       }
     }
-    setSelectedSubTaskIds(new Set()); setActiveTab('live'); showToast("Started stitching!");
+    setSelectedSubTaskIds(new Set()); setActiveTab('live'); showToast("Started working!");
   };
 
   const executeCancelSubTask = async (st) => {
@@ -1032,41 +1094,50 @@ export default function App() {
     );
   };
 
-  const renderPhotoUploader = () => (
-    <div className="pt-4 border-t border-gray-800">
-      <label className="block text-[10px] uppercase tracking-widest font-black text-gray-400 mb-4 text-center">QC Photos (3 Required)</label>
-      
-      <div className="grid grid-cols-3 gap-3">
-        {['chest', 'waist', 'hip'].map(slot => (
-           <div key={slot} className="flex flex-col gap-2">
-               <div className="text-[10px] uppercase tracking-widest font-bold text-gray-500 text-center">{slot}</div>
-               {!imagePreviews[slot] ? (
-                  <div className="flex flex-col gap-2">
-                      <label className="w-full h-12 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative">
-                          <input type="file" accept="image/*" capture="environment" onChange={(e) => handleImageChange(e, slot)} className="absolute inset-0 opacity-0 cursor-pointer" />
-                          <ImageIcon size={16}/>
-                      </label>
-                      <button type="button" onClick={() => startCamera(slot)} className="w-full h-12 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors">
-                          <Camera size={16}/>
-                      </button>
-                  </div>
-               ) : (
-                  <div className="relative w-full h-28 bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10">
-                      <img src={imagePreviews[slot]} className="w-full h-full object-cover opacity-80" />
-                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button type="button" onClick={() => {
-                              setImagePreviews(p => ({...p, [slot]: null}));
-                              setImageFiles(p => ({...p, [slot]: null}));
-                          }} className="p-2.5 bg-rose-500 hover:bg-rose-600 transition-colors text-white rounded-full shadow-lg"><Trash2 size={16}/></button>
-                      </div>
-                      <div className="absolute bottom-1 right-1 bg-[#cdfc4c] text-black text-[9px] font-black px-1.5 py-0.5 rounded shadow flex items-center gap-1"><CheckCircle size={10}/></div>
-                  </div>
-               )}
-           </div>
-        ))}
+  const renderPhotoUploader = (currentWorkType = 'Both') => {
+    const isCut = currentWorkType === 'Cut';
+    const slots = isCut ? ['chest'] : ['chest', 'waist', 'hip'];
+    
+    return (
+      <div className="pt-4 border-t border-gray-800">
+        <label className="block text-[10px] uppercase tracking-widest font-black text-gray-400 mb-4 text-center">
+          {isCut ? 'QC Photo (1 Required for Fabric Proof)' : 'QC Photos (3 Required)'}
+        </label>
+        
+        <div className={`grid gap-3 ${isCut ? 'grid-cols-1 max-w-xs mx-auto' : 'grid-cols-3'}`}>
+          {slots.map(slot => (
+             <div key={slot} className="flex flex-col gap-2">
+                 <div className="text-[10px] uppercase tracking-widest font-bold text-gray-500 text-center">
+                   {isCut && slot === 'chest' ? 'Fabric Proof' : slot}
+                 </div>
+                 {!imagePreviews[slot] ? (
+                    <div className="flex flex-col gap-2">
+                        <label className="w-full h-12 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative">
+                            <input type="file" accept="image/*" capture="environment" onChange={(e) => handleImageChange(e, slot)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                            <ImageIcon size={16}/>
+                        </label>
+                        <button type="button" onClick={() => startCamera(slot)} className="w-full h-12 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors">
+                            <Camera size={16}/>
+                        </button>
+                    </div>
+                 ) : (
+                    <div className="relative w-full h-28 bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10">
+                        <img src={imagePreviews[slot]} className="w-full h-full object-cover opacity-80" />
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button type="button" onClick={() => {
+                                setImagePreviews(p => ({...p, [slot]: null}));
+                                setImageFiles(p => ({...p, [slot]: null}));
+                            }} className="p-2.5 bg-rose-500 hover:bg-rose-600 transition-colors text-white rounded-full shadow-lg"><Trash2 size={16}/></button>
+                        </div>
+                        <div className="absolute bottom-1 right-1 bg-[#cdfc4c] text-black text-[9px] font-black px-1.5 py-0.5 rounded shadow flex items-center gap-1"><CheckCircle size={10}/></div>
+                    </div>
+                 )}
+             </div>
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderLiveQueue = () => {
     const liveTasks = tasks.filter(t => t.status === 'in_progress');
@@ -1159,6 +1230,12 @@ export default function App() {
                                  
                                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/30 pointer-events-none transition-opacity duration-300"></div>
 
+                                 <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+                                     <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-[10px] font-black flex items-center gap-1.5 shadow-lg ${st.workType === 'Cut' ? 'bg-yellow-500 text-black border-yellow-400' : (st.workType === 'Stitch' ? 'bg-blue-500 text-white border-blue-400' : 'bg-purple-500 text-white border-purple-400')}`}>
+                                       {st.workType === 'Cut' ? '✂️ CUT ONLY' : (st.workType === 'Stitch' ? '🧵 STITCH ONLY' : '✂️+🧵 BOTH')}
+                                     </span>
+                                 </div>
+
                                  {isMyWork && (
                                    <div className="absolute top-4 right-4 z-10">
                                       <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-xl backdrop-blur-md ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/40 bg-black/40 group-hover:border-white/80'}`}>
@@ -1208,16 +1285,22 @@ export default function App() {
 
                     {isMyWork && (
                        <div className="mt-2 pt-6 border-t border-gray-800 max-w-3xl">
-                         {renderPhotoUploader()}
-                         
                          {(() => {
                             const selectedSubTasks = items.filter(st => selectedSubTaskIds.has(st.subId));
+                            const requiresThree = selectedSubTasks.some(st => st.workType !== 'Cut');
+                            const uploaderWorkType = requiresThree ? 'Both' : 'Cut';
                             const hasSelection = selectedSubTasks.length > 0;
-                            const canSubmit = hasSelection && imagePreviews.chest && imagePreviews.waist && imagePreviews.hip;
+                            
+                            const canSubmit = hasSelection && 
+                               (requiresThree ? (imagePreviews.chest && imagePreviews.waist && imagePreviews.hip) : imagePreviews.chest);
+
                             return (
-                              <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className="w-full py-5 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-xl">
-                                {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!canSubmit ? 'Add All 3 QC Photos to Submit' : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
-                              </button>
+                              <>
+                                {hasSelection && renderPhotoUploader(uploaderWorkType)}
+                                <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className="w-full py-5 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-xl">
+                                  {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!canSubmit ? (requiresThree ? 'Add All 3 QC Photos to Submit' : 'Add Fabric Proof Photo to Submit') : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
+                                </button>
+                              </>
                             );
                          })()}
                        </div>
@@ -1281,11 +1364,14 @@ export default function App() {
       
       if (!acc[plat]) acc[plat] = {};
       
-      if (!acc[plat][safeProduct]) {
-        acc[plat][safeProduct] = { 
-          id: `${plat}-${safeProduct}`, 
+      const groupKey = `${safeProduct}-${t.workType || 'Both'}`;
+
+      if (!acc[plat][groupKey]) {
+        acc[plat][groupKey] = { 
+          id: `${plat}-${groupKey}`, 
           product: safeProduct, 
           platform: plat, 
+          workType: t.workType || 'Both',
           subTasks: [], 
           status: t.status,
           oldestTask: t.createdAt,
@@ -1294,21 +1380,21 @@ export default function App() {
         };
       } else {
         const weight = PRIORITY_WEIGHT[taskPriority] || 2;
-        if (weight > acc[plat][safeProduct].highestPriorityWeight) {
-          acc[plat][safeProduct].highestPriority = taskPriority;
-          acc[plat][safeProduct].highestPriorityWeight = weight;
+        if (weight > acc[plat][groupKey].highestPriorityWeight) {
+          acc[plat][groupKey].highestPriority = taskPriority;
+          acc[plat][groupKey].highestPriorityWeight = weight;
         }
       }
       
       const qty = Number(t.quantity) || 1;
-      if (t.status === 'rejected') acc[plat][safeProduct].status = 'rejected';
+      if (t.status === 'rejected') acc[plat][groupKey].status = 'rejected';
       
-      if (new Date(t.createdAt) < new Date(acc[plat][safeProduct].oldestTask)) {
-          acc[plat][safeProduct].oldestTask = t.createdAt;
+      if (new Date(t.createdAt) < new Date(acc[plat][groupKey].oldestTask)) {
+          acc[plat][groupKey].oldestTask = t.createdAt;
       }
       
       for (let i = 0; i < qty; i++) {
-        acc[plat][safeProduct].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority, assignee: t.assignee, orderNumber: t.orderNumber });
+        acc[plat][groupKey].subTasks.push({ ...t, subId: `${t.id}-${i}`, listIndex: i + 1, quantity: 1, size: t.size, pieceRate: t.pieceRate, priority: taskPriority, assignee: t.assignee, orderNumber: t.orderNumber, workType: t.workType || 'Both' });
       }
       return acc;
     }, {});
@@ -1373,7 +1459,7 @@ export default function App() {
         {role === 'admin' && (
           <div className="bg-[#111] border border-gray-800 rounded-2xl p-5 mb-8">
             <h3 className="text-white font-bold text-sm mb-4 flex items-center gap-2"><Plus size={16} className="text-rose-500"/> Assign Urgent Task</h3>
-            <div className="grid grid-cols-2 lg:grid-cols-9 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-10 gap-3">
               <div className="col-span-2 relative">
                 <div className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-gray-400 cursor-pointer flex items-center justify-between" onClick={() => setIsTaskProductDropdownOpen(!isTaskProductDropdownOpen)}>
                   <span className="truncate">{taskForm.product || "Select Product..."}</span><ChevronDown size={14}/>
@@ -1398,31 +1484,37 @@ export default function App() {
                   </>
                 )}
               </div>
-              <select value={taskForm.platform} onChange={(e) => setTaskForm({...taskForm, platform: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
+              <select value={taskForm.workType} onChange={(e) => setTaskForm({...taskForm, workType: e.target.value})} className="col-span-2 lg:col-span-1 px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none font-bold">
+                <option value="Both">Both ✂️+🧵</option>
+                <option value="Cut">Cut ✂️</option>
+                <option value="Stitch">Stitch 🧵</option>
+              </select>
+              <select value={taskForm.platform} onChange={(e) => setTaskForm({...taskForm, platform: e.target.value})} className="col-span-2 lg:col-span-1 px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
                 <option value="Shopify / Website">Shopify</option>
                 <option value="Amazon">Amazon</option>
                 <option value="Myntra">Myntra</option>
               </select>
-              <div className="relative">
+              <div className="relative col-span-2 lg:col-span-1">
                  <input type="text" value={taskForm.orderNumber} onChange={(e) => setTaskForm({...taskForm, orderNumber: e.target.value})} placeholder="Order #" className="w-full px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" title="Order Number (Optional)" />
               </div>
-              <select value={taskForm.size} onChange={(e) => setTaskForm({...taskForm, size: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
-                <option value="">Size</option>{['XS', 'S', 'M', 'L', 'XL'].map(s => <option key={s} value={s}>{s}</option>)}
+              <select value={taskForm.size} onChange={(e) => setTaskForm({...taskForm, size: e.target.value})} className="col-span-2 lg:col-span-1 px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none">
+                <option value="">Size</option>{['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-              <select value={taskForm.assignee} onChange={(e) => setTaskForm({...taskForm, assignee: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none text-purple-400 font-bold">
+              <select value={taskForm.assignee} onChange={(e) => setTaskForm({...taskForm, assignee: e.target.value})} className="col-span-2 lg:col-span-1 px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none text-purple-400 font-bold">
                 <option value="Any">Assign: Any</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-              <select value={taskForm.priority} onChange={(e) => setTaskForm({...taskForm, priority: e.target.value})} className="px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none font-bold">
+              <select value={taskForm.priority} onChange={(e) => setTaskForm({...taskForm, priority: e.target.value})} className="col-span-2 lg:col-span-1 px-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none font-bold">
                 <option value="1">Priority 1 (Highest)</option>
                 <option value="2">Priority 2</option>
                 <option value="3">Priority 3</option>
                 <option value="4">Priority 4</option>
               </select>
-              <div className="relative"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
+              <div className="relative col-span-2 lg:col-span-1"><span className="absolute left-3 top-2 text-sm text-gray-500 font-bold">Qty:</span><input type="number" min="1" value={taskForm.quantity} onChange={(e) => setTaskForm({...taskForm, quantity: parseInt(e.target.value) || 1})} className="w-full pl-10 pr-3 py-2 bg-black border border-gray-800 rounded-lg text-sm text-white outline-none" /></div>
               <button onClick={() => {
                 if(!taskForm.product || !taskForm.size) return showToast("Select a product and size", "error");
-                addDoc(collection(db, 'priority_tasks'), { product: formatProductName(taskForm.product), size: taskForm.size, quantity: taskForm.quantity, pieceRate: 250, platform: taskForm.platform, assignee: taskForm.assignee, priority: taskForm.priority, orderNumber: taskForm.orderNumber, status: 'pending', createdAt: new Date().toISOString() });
-                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '' }); showToast("Task Assigned!");
+                const rate = taskForm.workType === 'Both' ? 250 : 120;
+                addDoc(collection(db, 'priority_tasks'), { product: formatProductName(taskForm.product), size: taskForm.size, quantity: taskForm.quantity, pieceRate: rate, platform: taskForm.platform, assignee: taskForm.assignee, priority: taskForm.priority, orderNumber: taskForm.orderNumber, workType: taskForm.workType, status: 'pending', createdAt: new Date().toISOString() });
+                setTaskForm({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '', workType: 'Both' }); showToast("Task Assigned!");
               }} className="col-span-2 lg:col-span-1 bg-[#cdfc4c] text-black font-black text-sm rounded-lg py-2 hover:bg-[#b5e638]">Add</button>
             </div>
           </div>
@@ -1497,10 +1589,13 @@ export default function App() {
                                        <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>
                                     )}
                                     
-                                    <div className="absolute top-4 left-4 z-10">
+                                    <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
                                        <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-xs font-black flex items-center gap-1.5 ${pBadge}`}>
                                          {group.highestPriority === '1' && <Flame size={12}/>}
                                          P{group.highestPriority} Priority
+                                       </span>
+                                       <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-xs font-black flex items-center gap-1.5 shadow-lg ${group.workType === 'Cut' ? 'bg-yellow-500 text-black border-yellow-400' : (group.workType === 'Stitch' ? 'bg-blue-500 text-white border-blue-400' : 'bg-purple-500 text-white border-purple-400')}`}>
+                                         {group.workType === 'Cut' ? '✂️ CUT ONLY' : (group.workType === 'Stitch' ? '🧵 STITCH ONLY' : '✂️+🧵 BOTH')}
                                        </span>
                                     </div>
 
@@ -1528,58 +1623,70 @@ export default function App() {
                                           </div>
                                        </div>
 
-                                       <div className="flex flex-col gap-2 w-full mb-6 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                                       <div className="flex flex-col gap-2 w-full mb-6 max-h-64 overflow-y-auto custom-scrollbar pr-1">
                                           {group.subTasks.map(st => (
-                                            <div key={st.subId} onClick={(e) => { e.stopPropagation(); toggleSubTaskSelection(st.subId); }} className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-purple-900/20 border-purple-500' : 'bg-[#111] border-gray-800 hover:border-gray-600'}`}>
-                                              <div className="flex items-center gap-3">
-                                                <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-purple-500 bg-purple-500' : 'border-gray-600'}`}>
-                                                  {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
+                                            <div key={st.subId} onClick={(e) => { e.stopPropagation(); toggleSubTaskSelection(st.subId); }} className={`flex flex-col gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedSubTaskIds.has(st.subId) ? 'bg-purple-900/20 border-purple-500' : 'bg-[#111] border-gray-800 hover:border-gray-600'}`}>
+                                              <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-3">
+                                                  <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors ${selectedSubTaskIds.has(st.subId) ? 'border-purple-500 bg-purple-500' : 'border-gray-600'}`}>
+                                                    {selectedSubTaskIds.has(st.subId) && <CheckCircle size={14} className="text-black" />}
+                                                  </div>
+                                                  <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
                                                 </div>
-                                                <span className={`font-bold ${selectedSubTaskIds.has(st.subId) ? 'text-white' : 'text-gray-400'}`}>Size {st.size}</span>
-                                                {st.assignee && st.assignee !== 'Any' && <span className="text-[9px] bg-purple-900/40 border border-purple-500 text-purple-300 px-1.5 py-0.5 rounded flex items-center gap-1"><UserCheck size={10}/> {st.assignee}</span>}
-                                                {st.orderNumber && <span className="text-[9px] bg-blue-900/40 border border-blue-500 text-blue-300 px-1.5 py-0.5 rounded flex items-center gap-1">#{st.orderNumber}</span>}
-                                              </div>
-                                              <div className="flex items-center gap-3">
-                                                {role === 'admin' && (
-                                                  cancellingSubId === st.subId ? (
-                                                    <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
-                                                      <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
-                                                      <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
-                                                      <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
-                                                    </div>
-                                                  ) : (
-                                                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                                                      <input 
-                                                        type="text" 
-                                                        placeholder="Ord #" 
-                                                        defaultValue={st.orderNumber || ''} 
-                                                        onBlur={(e) => {
-                                                          if (e.target.value !== (st.orderNumber || '')) {
-                                                             updateTaskField(st.id, 'orderNumber', e.target.value);
-                                                          }
-                                                        }}
-                                                        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                                                        className="bg-black border border-gray-700 text-[10px] text-blue-300 font-bold py-1 px-2 rounded outline-none w-14 sm:w-16 hover:border-blue-500/50 transition-colors"
-                                                        title="Add/Edit Order Number"
-                                                      />
-                                                      <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
-                                                        <option value="Shopify / Website">Shopify</option>
-                                                        <option value="Amazon">Amazon</option>
-                                                        <option value="Myntra">Myntra</option>
-                                                      </select>
-                                                      <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
-                                                        <option value="1">P1</option>
-                                                        <option value="2">P2</option>
-                                                        <option value="3">P3</option>
-                                                        <option value="4">P4</option>
-                                                      </select>
-                                                      <button onClick={() => setCancellingSubId(st.subId)} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
+                                                <div className="flex items-center gap-2">
+                                                  {role === 'admin' && (
+                                                    cancellingSubId === st.subId ? (
+                                                      <div className="flex items-center gap-2 bg-rose-900/30 p-1 rounded-lg border border-rose-900/50" onClick={(e) => e.stopPropagation()}>
+                                                        <span className="text-[10px] font-bold text-rose-500 uppercase px-1">Sure?</span>
+                                                        <button onClick={(e) => { e.stopPropagation(); executeCancelSubTask(st); }} className="px-2 py-1 bg-rose-500 text-white rounded text-[10px] font-black uppercase">Yes</button>
+                                                        <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
+                                                      </div>
+                                                    ) : (
+                                                      <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(st.subId); }} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
                                                         <Trash2 size={16} />
                                                       </button>
-                                                    </div>
-                                                  )
-                                                )}
+                                                    )
+                                                  )}
+                                                </div>
                                               </div>
+                                              
+                                              {/* Admin Edit Controls - Wrapped for responsiveness */}
+                                              <div className="flex items-center gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
+                                                <select value={st.workType || 'Both'} onChange={(e) => updateTaskField(st.id, 'workType', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500">
+                                                  <option value="Both">Both</option>
+                                                  <option value="Cut">Cut</option>
+                                                  <option value="Stitch">Stitch</option>
+                                                </select>
+                                                <select value={st.assignee || 'Any'} onChange={(e) => updateTaskField(st.id, 'assignee', e.target.value)} className="bg-purple-950/20 border border-purple-900/50 text-[10px] text-purple-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-purple-500 transition-colors">
+                                                  <option value="Any">Any Tailor</option>
+                                                  {tailors.map(t => <option key={t} value={t}>{t}</option>)}
+                                                </select>
+                                                <input 
+                                                  type="text" 
+                                                  placeholder="Ord #" 
+                                                  defaultValue={st.orderNumber || ''} 
+                                                  onBlur={(e) => {
+                                                    if (e.target.value !== (st.orderNumber || '')) {
+                                                       updateTaskField(st.id, 'orderNumber', e.target.value);
+                                                    }
+                                                  }}
+                                                  onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                                                  className="bg-black border border-gray-700 text-[10px] text-blue-300 font-bold py-1 px-2 rounded outline-none w-14 sm:w-16 hover:border-blue-500/50 transition-colors"
+                                                  title="Add/Edit Order Number"
+                                                />
+                                                <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500">
+                                                  <option value="Shopify / Website">Shopify</option>
+                                                  <option value="Amazon">Amazon</option>
+                                                  <option value="Myntra">Myntra</option>
+                                                </select>
+                                                <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500">
+                                                  <option value="1">P1</option>
+                                                  <option value="2">P2</option>
+                                                  <option value="3">P3</option>
+                                                  <option value="4">P4</option>
+                                                </select>
+                                              </div>
+
                                             </div>
                                           ))}
                                        </div>
@@ -1590,7 +1697,7 @@ export default function App() {
                                              const hasSelection = selectedSubTasks.length > 0;
                                              return (
                                                <button disabled={!hasSelection} onClick={(e) => { e.stopPropagation(); handleStartStitching(group); }} className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black tracking-wide rounded-xl disabled:opacity-50 disabled:bg-gray-800 disabled:text-gray-500 transition-all shadow-lg shadow-purple-500/20 text-lg flex items-center justify-center gap-2">
-                                                 <Scissors size={20}/> {hasSelection ? `Start Stitching (${selectedSubTasks.length})` : 'Select Sizes'}
+                                                 <Scissors size={20}/> {hasSelection ? `Start Working (${selectedSubTasks.length})` : 'Select Sizes'}
                                                </button>
                                              );
                                           })()}
@@ -1645,6 +1752,22 @@ export default function App() {
             </div>
           </div>
           
+          <div className="pt-4 border-t border-gray-800 bg-purple-950/10 p-4 rounded-xl mb-4 border border-purple-900/30">
+              <label className="block text-[10px] uppercase tracking-widest font-bold text-purple-400 mb-2">Work Performed</label>
+              <select 
+                  value={prodForm.workType} 
+                  onChange={(e) => {
+                      const newWorkType = e.target.value;
+                      setProdForm({...prodForm, workType: newWorkType, pieceRate: newWorkType === 'Both' ? 250 : 120});
+                  }} 
+                  className="w-full px-4 py-3 bg-black border border-purple-900/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-white font-bold"
+              >
+                  <option value="Both">✂️+🧵 Cutting & Stitching (₹250 base)</option>
+                  <option value="Cut">✂️ Cutting Only (₹120 base)</option>
+                  <option value="Stitch">🧵 Stitching Only (₹120 base)</option>
+              </select>
+          </div>
+
           <div>
             <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Style / Product</label>
             <div className="relative">
@@ -1664,8 +1787,8 @@ export default function App() {
 
           <div className="pt-4 border-t border-gray-800">
             <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-4 text-center">Quantities by Size</label>
-            <div className="grid grid-cols-5 gap-3">
-              {['XS', 'S', 'M', 'L', 'XL'].map(size => (
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-3">
+              {['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'].map(size => (
                 <div key={size} className="text-center">
                   <label className="block text-xs font-bold text-gray-500 mb-2">{size}</label>
                   <input type="number" min="0" value={prodForm.sizes[size] || ''} onChange={(e) => handleProdSizeChange(size, e.target.value)} placeholder="0" className="w-full py-3 text-center bg-black border border-gray-800 rounded-xl text-lg font-bold focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
@@ -1685,7 +1808,7 @@ export default function App() {
             </div>
           </div>
 
-          {renderPhotoUploader()}
+          {renderPhotoUploader(prodForm.workType)}
 
           <button type="submit" disabled={isUploading} className="w-full py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 mt-6 text-lg">
             {isUploading ? 'Uploading Securely...' : (editingEntryId ? 'Update Batch Log' : 'Submit Batch for QC Review')}
@@ -2050,6 +2173,7 @@ export default function App() {
                                        <span className="bg-purple-900/30 text-purple-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.platform || 'Shopify'}</span>
                                        {entry.sizes && <span className="bg-blue-900/30 text-blue-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">Sizes: {Object.entries(entry.sizes).filter(([_,q])=>Number(q)>0).map(([s,q])=>`${s}:${q}`).join(', ')}</span>}
                                        {entry.orderNumber && <span className="bg-emerald-900/30 text-emerald-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">Ord: {entry.orderNumber}</span>}
+                                       <span className="bg-yellow-900/30 text-yellow-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.workType === 'Cut' ? '✂️ Cut' : (entry.workType === 'Stitch' ? '🧵 Stitch' : '✂️+🧵 Both')}</span>
                                     </div>
                                  </div>
                                </>
@@ -2085,7 +2209,7 @@ export default function App() {
                             
                             <div className="flex items-center gap-2 w-full lg:justify-end mt-1">
                                {(entry.imageUrls || entry.imageUrl) && (
-                                  <button onClick={() => setLightboxData({ urls: entry.imageUrls || { old_photo: entry.imageUrl }, timestamp: entry.timestamp, tailor: entry.tailor, product: formatProductName(entry.product) })} className="px-3 py-2 text-xs font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 border border-blue-900/50 hover:bg-blue-500 hover:text-white rounded-xl flex items-center justify-center gap-1.5 transition-colors flex-1 lg:flex-none"><Camera size={14}/> View QC</button>
+                                  <button onClick={() => setLightboxData({ urls: entry.imageUrls || { old_photo: entry.imageUrl }, timestamp: entry.timestamp, tailor: entry.tailor, product: formatProductName(entry.product), sizes: entry.sizes, workType: entry.workType || 'Both' })} className="px-3 py-2 text-xs font-black uppercase tracking-widest text-blue-400 bg-blue-900/20 border border-blue-900/50 hover:bg-blue-500 hover:text-white rounded-xl flex items-center justify-center gap-1.5 transition-colors flex-1 lg:flex-none"><Camera size={14}/> View QC</button>
                                )}
                                <button onClick={() => startEdit(entry)} className="p-2 text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors border border-gray-700" title="Edit"><Edit2 size={16}/></button>
                                
@@ -2412,18 +2536,58 @@ export default function App() {
             <div className="flex overflow-x-auto gap-4 w-full p-4 md:p-8 snap-x snap-mandatory custom-scrollbar items-center">
                 {Object.entries(lightboxData.urls).filter(([_, url]) => url).map(([slot, url]) => (
                     <div key={slot} className="shrink-0 w-[85vw] md:w-[45vw] lg:w-[30vw] snap-center flex flex-col items-center">
-                        <div className="bg-[#cdfc4c] text-black text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-4 shadow-lg">{slot} Measurement</div>
+                        <div className="bg-[#cdfc4c] text-black text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-4 shadow-lg">{slot === 'chest' && lightboxData.workType === 'Cut' ? 'Fabric Proof' : slot + ' Measurement'}</div>
                         <img src={url} className="w-full max-h-[60vh] object-contain rounded-2xl shadow-2xl bg-black/50 border border-gray-800" onClick={(e) => e.stopPropagation()}/>
                     </div>
                 ))}
             </div>
 
-            <div className="mt-2 bg-[#111] border border-gray-800 rounded-xl p-4 text-center w-full max-w-md shadow-2xl shrink-0" onClick={(e) => e.stopPropagation()}>
-               <div className="text-white font-bold text-lg">{lightboxData.product}</div>
-               <div className="text-gray-400 text-sm mt-1">Stitched by <span className="text-[#cdfc4c] font-bold">{lightboxData.tailor}</span></div>
-               <div className="text-gray-500 text-xs mt-2 flex items-center justify-center gap-1.5">
-                  <Clock size={12}/> {new Date(lightboxData.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+            <div className="mt-2 flex flex-col md:flex-row gap-3 w-full max-w-4xl px-4 shrink-0" onClick={(e) => e.stopPropagation()}>
+               <div className="bg-[#111] border border-gray-800 rounded-xl p-4 text-center flex-1 shadow-2xl flex flex-col justify-center">
+                  <div className="text-white font-bold text-lg leading-tight mb-1">{lightboxData.product}</div>
+                  <div className="text-gray-400 text-sm">Action by <span className="text-[#cdfc4c] font-bold">{lightboxData.tailor}</span></div>
+                  <div className="text-gray-500 text-xs mt-2 flex items-center justify-center gap-1.5">
+                     <Clock size={12}/> {new Date(lightboxData.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                  </div>
+                  {lightboxData.sizes && (
+                     <div className="mt-3 pt-3 border-t border-gray-800 text-[11px] text-[#cdfc4c] font-black uppercase tracking-widest flex flex-wrap justify-center gap-2">
+                        {Object.entries(lightboxData.sizes).filter(([_,q])=>Number(q)>0).map(([s,q])=>`${s} (${q})`).join(' • ')}
+                     </div>
+                  )}
                </div>
+
+               {lightboxData.workType !== 'Cut' && (
+               <div className="bg-[#111] border border-gray-800 rounded-xl p-3 flex-1 shadow-2xl">
+                  <div className="text-center text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Standard Size Chart (Inches)</div>
+                  <table className="w-full text-xs text-center border-collapse">
+                     <thead>
+                        <tr className="text-gray-500 border-b border-gray-800">
+                           <th className="pb-1 font-bold">SIZE</th>
+                           <th className="pb-1 font-bold">BUST</th>
+                           <th className="pb-1 font-bold">WAIST</th>
+                           <th className="pb-1 font-bold">HIP</th>
+                        </tr>
+                     </thead>
+                     <tbody className="text-gray-300">
+                        {(() => {
+                           const activeSizes = lightboxData.sizes ? Object.entries(lightboxData.sizes).filter(([_,q])=>Number(q)>0).map(([s,_])=>s) : [];
+                           return ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL'].map((sizeKey) => {
+                              const specs = { 'XXS': {b:32,w:28,h:36}, 'XS': {b:34,w:30,h:38}, 'S': {b:36,w:32,h:40}, 'M': {b:38,w:34,h:42}, 'L': {b:40,w:36,h:44}, 'XL': {b:42,w:38,h:46}, 'XXL': {b:44,w:40,h:48} }[sizeKey];
+                              const isActive = activeSizes.includes(sizeKey);
+                              return (
+                                 <tr key={sizeKey} className={`border-b border-gray-800/50 transition-colors ${isActive ? 'bg-[#cdfc4c]/10' : 'hover:bg-gray-800/30'}`}>
+                                    <td className={`py-1 font-black ${isActive ? 'text-[#cdfc4c]' : 'text-white'}`}>{sizeKey}</td>
+                                    <td className={`py-1 ${isActive ? 'text-[#cdfc4c] font-bold' : ''}`}>{specs.b}</td>
+                                    <td className={`py-1 ${isActive ? 'text-[#cdfc4c] font-bold' : ''}`}>{specs.w}</td>
+                                    <td className={`py-1 ${isActive ? 'text-[#cdfc4c] font-bold' : ''}`}>{specs.h}</td>
+                                 </tr>
+                              )
+                           });
+                        })()}
+                     </tbody>
+                  </table>
+               </div>
+               )}
             </div>
           </div>
         </div>
