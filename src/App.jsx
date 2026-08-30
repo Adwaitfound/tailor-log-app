@@ -152,10 +152,15 @@ export default function App() {
   const [setupForm, setSetupForm] = useState({ tailorsText: '', productsText: '' });
   const [reportForm, setReportForm] = useState({ type: 'ledger', startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0], tailor: 'All' });
 
+  // --- CUSTOM DATE RANGE FOR LEDGER ---
+  const [ledgerStartDate, setLedgerStartDate] = useState(() => {
+    const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0];
+  });
+  const [ledgerEndDate, setLedgerEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+
   const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
   const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
-  const [ledgerViewMode, setLedgerViewMode] = useState('detailed'); 
-  const [dashboardTimeFilter, setDashboardTimeFilter] = useState('all'); 
+  const [ledgerViewMode, setLedgerViewMode] = useState('tailor'); // Default to tailor view for easiest debt tracking
   const [statsTimeFilter, setStatsTimeFilter] = useState('30days');
   const [ledgerSearch, setLedgerSearch] = useState('');
 
@@ -167,18 +172,23 @@ export default function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
-  const getBlacklist = () => JSON.parse(localStorage.getItem('poshakh_blacklist') || '[]');
+  // Safe Local Storage Wrapper
+  const safeStorage = {
+      getItem: (key) => { try { return localStorage.getItem(key); } catch(e) { return null; } },
+      setItem: (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} },
+      removeItem: (key) => { try { localStorage.removeItem(key); } catch(e) {} }
+  };
+
+  const getBlacklist = () => JSON.parse(safeStorage.getItem('poshakh_blacklist') || '[]');
   const addToBlacklist = (ids) => {
       const current = getBlacklist();
       const newBlacklist = [...new Set([...current, ...ids])];
-      localStorage.setItem('poshakh_blacklist', JSON.stringify(newBlacklist));
+      safeStorage.setItem('poshakh_blacklist', JSON.stringify(newBlacklist));
       return newBlacklist;
   };
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
+    const handleFullscreenChange = () => { setIsFullscreen(!!document.fullscreenElement); };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
@@ -198,7 +208,7 @@ export default function App() {
     `;
     document.head.appendChild(style);
 
-    const savedRole = localStorage.getItem('poshakh_role');
+    const savedRole = safeStorage.getItem('poshakh_role');
     if (savedRole) {
       setRole(savedRole);
       setIsLoggedIn(true);
@@ -212,8 +222,8 @@ export default function App() {
     let unsubscribeTasks;
 
     const loadLocalData = () => {
-      const localLedger = JSON.parse(localStorage.getItem('poshakh_ledger') || '[]');
-      const localConfig = JSON.parse(localStorage.getItem('poshakh_config') || 'null');
+      const localLedger = JSON.parse(safeStorage.getItem('poshakh_ledger') || '[]');
+      const localConfig = JSON.parse(safeStorage.getItem('poshakh_config') || 'null');
       
       setEntries(localLedger);
       if (localConfig) {
@@ -375,17 +385,17 @@ export default function App() {
 
   const handleLogin = (selectedRole) => {
     if (selectedRole === 'staff') {
-      setRole('staff'); setIsLoggedIn(true); setActiveTab('tasks'); localStorage.setItem('poshakh_role', 'staff');
+      setRole('staff'); setIsLoggedIn(true); setActiveTab('tasks'); safeStorage.setItem('poshakh_role', 'staff');
     } else if (selectedRole === 'admin') {
       if (pinInput === ADMIN_PIN) {
-        setRole('admin'); setIsLoggedIn(true); setActiveTab('ledger'); localStorage.setItem('poshakh_role', 'admin'); setPinInput('');
+        setRole('admin'); setIsLoggedIn(true); setActiveTab('ledger'); safeStorage.setItem('poshakh_role', 'admin'); setPinInput('');
       } else { showToast("Incorrect PIN", "error"); setPinInput(''); }
     }
   };
 
-  const handleLogout = () => { setIsLoggedIn(false); setRole(null); setLoginStep('select'); localStorage.removeItem('poshakh_role'); };
+  const handleLogout = () => { setIsLoggedIn(false); setRole(null); setLoginStep('select'); safeStorage.removeItem('poshakh_role'); };
   const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
-  const syncLocal = (key, data) => localStorage.setItem(key, JSON.stringify(data));
+  const syncLocal = (key, data) => safeStorage.setItem(key, JSON.stringify(data));
 
   const saveConfig = async () => {
     const newTailors = setupForm.tailorsText.split('\n').map(t => t.trim()).filter(t => t);
@@ -525,7 +535,6 @@ export default function App() {
 
     try {
       const finalImageUrls = { chest: null, waist: null, hip: null };
-      
       const slotsToProcess = isCutOnly ? ['chest'] : ['chest', 'waist', 'hip'];
 
       for (const slot of slotsToProcess) {
@@ -915,17 +924,15 @@ export default function App() {
     } else { document.exitFullscreen(); }
   };
 
+  // --- LEDGER FILTERING UPDATED FOR CUSTOM DATES ---
   const timeFilteredEntries = useMemo(() => {
-    if (dashboardTimeFilter === 'all') return entries;
-    const current = getPayCycleDates(0);
-    const last = getPayCycleDates(1);
     return entries.filter(e => {
       const d = new Date(e.date);
-      if (dashboardTimeFilter === 'current_cycle') return d >= new Date(current.start) && d <= new Date(current.end);
-      if (dashboardTimeFilter === 'last_cycle') return d >= new Date(last.start) && d <= new Date(last.end);
-      return true;
+      const start = new Date(ledgerStartDate);
+      const end = new Date(ledgerEndDate);
+      return d >= start && d <= end;
     });
-  }, [entries, dashboardTimeFilter]);
+  }, [entries, ledgerStartDate, ledgerEndDate]);
 
   const tailorFilteredEntries = useMemo(() => {
     if (selectedTailorFilter === 'All') return timeFilteredEntries;
@@ -955,7 +962,8 @@ export default function App() {
     return result;
   }, [tailorFilteredEntries, ledgerFilterType, ledgerSortOrder, ledgerSearch]);
 
-  const totals = useMemo(() => {
+  // PERIOD Totals (Based on selected date range)
+  const periodTotals = useMemo(() => {
     return tailorFilteredEntries.reduce((acc, curr) => {
       if (curr.type === 'production' && curr.qcStatus !== 'rejected') { 
         acc.pieces += Number(curr.totalPieces) || 0; 
@@ -966,7 +974,17 @@ export default function App() {
     }, { pieces: 0, earned: 0, paid: 0 });
   }, [tailorFilteredEntries]);
 
-  const pendingBalance = totals.earned - totals.paid;
+  // LIFETIME Totals (Used to calculate true Pending Balance so money isn't "lost" outside the date filter)
+  const lifetimeTotals = useMemo(() => {
+    const matchingEntries = selectedTailorFilter === 'All' ? entries : entries.filter(e => e.tailor === selectedTailorFilter);
+    return matchingEntries.reduce((acc, curr) => {
+       if (curr.type === 'production' && curr.qcStatus !== 'rejected') acc.earned += Number(curr.amount) || 0;
+       else if (curr.type === 'payment') acc.paid += Number(curr.amount) || 0;
+       return acc;
+    }, { earned: 0, paid: 0 });
+  }, [entries, selectedTailorFilter]);
+
+  const pendingBalance = lifetimeTotals.earned - lifetimeTotals.paid;
   
   const unpaidPieces = useMemo(() => {
     if (pendingBalance <= 0) return 0;
@@ -1004,17 +1022,33 @@ export default function App() {
 
   const groupedByTailor = useMemo(() => {
     const groups = {};
+    
+    // 1. Calculate LIFETIME balances for all active tailors
+    entries.forEach(e => {
+        if (!groups[e.tailor]) groups[e.tailor] = { lifetimeEarned: 0, lifetimePaid: 0, periodPieces: 0, periodEarned: 0, periodPaid: 0 };
+        if (e.type === 'production' && e.qcStatus !== 'rejected') {
+            groups[e.tailor].lifetimeEarned += Number(e.amount) || 0;
+        } else if (e.type === 'payment') {
+            groups[e.tailor].lifetimePaid += Number(e.amount) || 0;
+        }
+    });
+
+    // 2. Calculate PERIOD specific stats based on the custom date range
     finalLedgerEntries.forEach(e => {
-      if (!groups[e.tailor]) groups[e.tailor] = { pieces: 0, earned: 0, paid: 0 };
+      if (!groups[e.tailor]) groups[e.tailor] = { lifetimeEarned: 0, lifetimePaid: 0, periodPieces: 0, periodEarned: 0, periodPaid: 0 };
       if (e.type === 'production' && e.qcStatus !== 'rejected') {
-        groups[e.tailor].pieces += Number(e.totalPieces) || 0;
-        groups[e.tailor].earned += Number(e.amount) || 0;
+        groups[e.tailor].periodPieces += Number(e.totalPieces) || 0;
+        groups[e.tailor].periodEarned += Number(e.amount) || 0;
       } else if (e.type === 'payment') {
-        groups[e.tailor].paid += Number(e.amount) || 0;
+        groups[e.tailor].periodPaid += Number(e.amount) || 0;
       }
     });
-    return Object.entries(groups).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.earned - a.earned);
-  }, [finalLedgerEntries]);
+    
+    return Object.entries(groups)
+      .filter(([name, data]) => data.lifetimeEarned > 0 || data.lifetimePaid > 0) // Only show tailors who actually have data
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => (b.lifetimeEarned - b.lifetimePaid) - (a.lifetimeEarned - a.lifetimePaid)); // Sort by who is owed the most money
+  }, [entries, finalLedgerEntries]);
 
   const groupedByPlatform = useMemo(() => {
     const groups = {};
@@ -1650,7 +1684,6 @@ export default function App() {
                                                 </div>
                                               </div>
                                               
-                                              {/* Admin Edit Controls - Wrapped for responsiveness */}
                                               <div className="flex items-center gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
                                                 <select value={st.workType || 'Both'} onChange={(e) => updateTaskField(st.id, 'workType', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500">
                                                   <option value="Both">Both</option>
@@ -2000,6 +2033,12 @@ export default function App() {
     const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
     const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
     
+    // Auto-calculate lifetime pending for the selected tailor
+    const tailorAllEntries = entries.filter(e => e.tailor === payForm.tailor);
+    const lifetimeEarned = tailorAllEntries.filter(e => e.type === 'production' && e.qcStatus !== 'rejected').reduce((s, e) => s + Number(e.amount), 0);
+    const lifetimePaid = tailorAllEntries.filter(e => e.type === 'payment').reduce((s, e) => s + Number(e.amount), 0);
+    const lifetimePending = lifetimeEarned - lifetimePaid;
+
     return (
       <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
@@ -2032,15 +2071,28 @@ export default function App() {
                </div>
 
                {payForm.tailor ? (
-                 <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div>
-                       <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
-                       <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
-                       <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
-                    </div>
-                    <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
-                       Auto-Fill ₹{periodEarned}
-                    </button>
+                 <div className="flex flex-col gap-3">
+                   <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                      <div>
+                         <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
+                         <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
+                         <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
+                      </div>
+                      <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
+                         Auto-Fill Period: ₹{periodEarned}
+                      </button>
+                   </div>
+                   
+                   <div className="bg-rose-950/20 rounded-xl p-4 border border-rose-900/50 flex flex-col md:flex-row items-center justify-between gap-4">
+                      <div>
+                         <div className="text-[10px] text-rose-400 font-bold uppercase tracking-widest mb-1 flex items-center gap-1.5"><AlertCircle size={12}/> Total Lifetime Debt</div>
+                         <div className="text-xl font-black text-rose-500">₹{lifetimePending.toLocaleString()}</div>
+                         <div className="text-[9px] text-gray-500 mt-1">Includes all past unpaid balances</div>
+                      </div>
+                      <button type="button" onClick={() => setPayForm({...payForm, amount: lifetimePending})} className="w-full md:w-auto px-4 py-2 bg-rose-900/40 hover:bg-rose-500 text-rose-300 hover:text-white text-[10px] font-black tracking-widest uppercase rounded-lg transition-colors border border-rose-500/30">
+                         Clear Lifetime: ₹{lifetimePending}
+                      </button>
+                   </div>
                  </div>
                ) : (
                  <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
@@ -2065,14 +2117,14 @@ export default function App() {
            <p className="text-gray-400 text-sm mt-1">Real-time ledger and balances.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-          <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto cursor-pointer">
+          <select value={selectedTailorFilter} onChange={(e) => setSelectedTailorFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto cursor-pointer">
             <option value="All">All Tailors Combined</option>{tailors.map(t => <option key={t} value={t}>{t} Only</option>)}
           </select>
-          <select value={dashboardTimeFilter} onChange={(e) => setDashboardTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none w-full sm:w-auto cursor-pointer">
-            <option value="all">All Time</option>
-            <option value="current_cycle">Current Pay Cycle</option>
-            <option value="last_cycle">Last Pay Cycle</option>
-          </select>
+          <div className="flex items-center gap-2 w-full md:w-auto">
+             <input type="date" value={ledgerStartDate} onChange={(e) => setLedgerStartDate(e.target.value)} className="w-full bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-3 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none" title="Start Date"/>
+             <span className="text-gray-500 text-[10px] font-bold uppercase">to</span>
+             <input type="date" value={ledgerEndDate} onChange={(e) => setLedgerEndDate(e.target.value)} className="w-full bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2 px-3 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none" title="End Date"/>
+          </div>
         </div>
       </div>
 
@@ -2080,26 +2132,26 @@ export default function App() {
         <div className="md:col-span-2 bg-gradient-to-br from-[#cdfc4c] to-[#a3d827] rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_30px_rgba(205,252,76,0.15)] relative overflow-hidden">
           <div className="absolute top-0 right-0 w-48 h-48 bg-white/20 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
           <div>
-            <div className="text-black/60 text-xs font-bold uppercase tracking-widest mb-2">Total Pending Payout</div>
+            <div className="text-black/60 text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5"><AlertCircle size={14}/> Total Lifetime Pending</div>
             <div className="text-5xl md:text-6xl font-black text-black tracking-tighter">₹{pendingBalance.toLocaleString()}</div>
           </div>
           <div className="mt-6 text-sm font-bold text-black/80 flex items-center gap-2 bg-black/5 px-4 py-2 rounded-xl inline-flex w-fit backdrop-blur-sm">
-             <Shirt size={16}/> Equates to ~{unpaidPieces} unpaid pieces
+             <Shirt size={16}/> Equates to ~{unpaidPieces} unpaid pieces total
           </div>
         </div>
 
         <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex flex-col justify-between">
            <div>
-              <div className="text-rose-500/80 text-[10px] uppercase tracking-widest font-bold mb-2">Total Earned Value</div>
-              <div className="text-3xl md:text-4xl font-black text-white">₹{totals.earned.toLocaleString()}</div>
+              <div className="text-rose-500/80 text-[10px] uppercase tracking-widest font-bold mb-2 flex items-center gap-1"><Calendar size={10}/> Earned In Period</div>
+              <div className="text-3xl md:text-4xl font-black text-white">₹{periodTotals.earned.toLocaleString()}</div>
            </div>
-           <div className="mt-6 text-gray-500 text-sm font-bold flex items-center gap-1.5"><Scissors size={14}/> {totals.pieces} pieces stitched</div>
+           <div className="mt-6 text-gray-500 text-sm font-bold flex items-center gap-1.5"><Scissors size={14}/> {periodTotals.pieces} pieces stitched</div>
         </div>
 
         <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex flex-col justify-between">
            <div>
-              <div className="text-sky-400/80 text-[10px] uppercase tracking-widest font-bold mb-2">Total Amount Paid</div>
-              <div className="text-3xl md:text-4xl font-black text-white">₹{totals.paid.toLocaleString()}</div>
+              <div className="text-sky-400/80 text-[10px] uppercase tracking-widest font-bold mb-2 flex items-center gap-1"><Calendar size={10}/> Paid In Period</div>
+              <div className="text-3xl md:text-4xl font-black text-white">₹{periodTotals.paid.toLocaleString()}</div>
            </div>
            <div className="mt-6 text-gray-500 text-sm font-bold flex items-center gap-1.5"><Wallet size={14}/> Cash payouts</div>
         </div>
@@ -2110,9 +2162,9 @@ export default function App() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 bg-[#111] p-4 rounded-2xl border border-gray-800">
            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
               <select value={ledgerViewMode} onChange={(e) => setLedgerViewMode(e.target.value)} className="bg-black border border-gray-700 text-sm font-bold text-white py-2 px-4 rounded-xl outline-none cursor-pointer focus:ring-2 focus:ring-[#cdfc4c]">
+                <option value="tailor">Group by Tailor (Statements)</option>
                 <option value="detailed">Detailed List</option>
                 <option value="outfit">Group by Outfit</option>
-                <option value="tailor">Group by Tailor</option>
                 <option value="platform">Group by Platform</option>
               </select>
               {ledgerViewMode === 'detailed' && (
@@ -2140,7 +2192,7 @@ export default function App() {
         <div className="w-full">
           {ledgerViewMode === 'detailed' ? (
             finalLedgerEntries.length === 0 ? (
-              <div className="p-16 text-center text-gray-600 bg-[#111] rounded-3xl border border-gray-800"><FileText size={48} className="mx-auto mb-4 opacity-20" /><p className="font-bold">No transactions found.</p></div>
+              <div className="p-16 text-center text-gray-600 bg-[#111] rounded-3xl border border-gray-800"><FileText size={48} className="mx-auto mb-4 opacity-20" /><p className="font-bold">No transactions found in this date range.</p></div>
             ) : (
               <div className="space-y-3">
                  {finalLedgerEntries.map((entry) => {
@@ -2173,7 +2225,6 @@ export default function App() {
                                        <span className="bg-purple-900/30 text-purple-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.platform || 'Shopify'}</span>
                                        {entry.sizes && <span className="bg-blue-900/30 text-blue-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">Sizes: {Object.entries(entry.sizes).filter(([_,q])=>Number(q)>0).map(([s,q])=>`${s}:${q}`).join(', ')}</span>}
                                        {entry.orderNumber && <span className="bg-emerald-900/30 text-emerald-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">Ord: {entry.orderNumber}</span>}
-                                       <span className="bg-yellow-900/30 text-yellow-300 text-[10px] px-2 py-0.5 rounded font-black uppercase tracking-widest">{entry.workType === 'Cut' ? '✂️ Cut' : (entry.workType === 'Stitch' ? '🧵 Stitch' : '✂️+🧵 Both')}</span>
                                     </div>
                                  </div>
                                </>
@@ -2230,7 +2281,7 @@ export default function App() {
             )
           ) : ledgerViewMode === 'outfit' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {groupedByProduct.map((prod, i) => {
+              {groupedByProduct.length === 0 ? <div className="col-span-full p-16 text-center text-gray-600 bg-[#111] rounded-3xl border border-gray-800"><p className="font-bold">No production data in this date range.</p></div> : groupedByProduct.map((prod, i) => {
                 const entryImage = findProductImage(prod.name);
                 return (
                   <div key={i} className="bg-[#111] p-5 rounded-3xl border border-gray-800 flex items-center gap-4 hover:border-gray-600 transition-colors shadow-lg">
@@ -2249,7 +2300,7 @@ export default function App() {
             </div>
           ) : ledgerViewMode === 'platform' ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {groupedByPlatform.map((plat, i) => (
+              {groupedByPlatform.length === 0 ? <div className="col-span-full p-16 text-center text-gray-600 bg-[#111] rounded-3xl border border-gray-800"><p className="font-bold">No production data in this date range.</p></div> : groupedByPlatform.map((plat, i) => (
                 <div key={i} className="bg-[#111] p-6 rounded-3xl border border-gray-800 hover:border-gray-600 transition-colors shadow-lg flex flex-col justify-between">
                   <div className="flex items-center gap-3 mb-6">
                      <div className="w-12 h-12 rounded-2xl bg-purple-900/20 border border-purple-900/50 flex items-center justify-center text-purple-400"><ShoppingBag size={20}/></div> 
@@ -2264,24 +2315,53 @@ export default function App() {
               ))}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {groupedByTailor.map((t, i) => (
-                <div key={i} className="bg-[#111] p-6 rounded-3xl border border-gray-800 hover:border-gray-600 transition-colors shadow-lg flex flex-col justify-between">
-                   <div className="flex items-center gap-4 mb-6">
-                      <div className="w-14 h-14 rounded-full bg-gray-800 border-2 border-gray-700 flex items-center justify-center text-gray-400"><User size={24}/></div>
-                      <div className="text-2xl font-black text-white truncate">{t.name}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {groupedByTailor.length === 0 ? <div className="col-span-full p-16 text-center text-gray-600 bg-[#111] rounded-3xl border border-gray-800"><p className="font-bold">No tailors with pending balances or activity found.</p></div> : groupedByTailor.map((t, i) => {
+                const lifetimePending = t.lifetimeEarned - t.lifetimePaid;
+                const isOwedMoney = lifetimePending > 0;
+
+                return (
+                <div key={i} className={`bg-[#111] p-6 rounded-3xl border transition-colors shadow-2xl flex flex-col relative overflow-hidden ${isOwedMoney ? 'border-rose-900/50' : 'border-gray-800'}`}>
+                   
+                   {/* LIFETIME BALANCE HEADER */}
+                   <div className={`p-5 -mx-6 -mt-6 mb-6 flex justify-between items-center ${isOwedMoney ? 'bg-gradient-to-r from-rose-950/40 to-black border-b border-rose-900/50' : 'bg-gray-900/40 border-b border-gray-800'}`}>
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-black border-2 border-gray-800 flex items-center justify-center text-gray-400"><User size={20}/></div>
+                        <div className="text-xl font-black text-white">{t.name}</div>
+                      </div>
+                      <div className="text-right">
+                         <div className={`text-[10px] font-black uppercase tracking-widest flex items-center justify-end gap-1 ${isOwedMoney ? 'text-rose-500' : 'text-gray-500'}`}>
+                            {isOwedMoney ? <AlertCircle size={10}/> : <CheckCircle size={10}/>} Total Pending
+                         </div>
+                         <div className={`text-3xl font-black tracking-tighter ${isOwedMoney ? 'text-rose-500' : 'text-gray-400'}`}>
+                            ₹{lifetimePending.toLocaleString()}
+                         </div>
+                      </div>
                    </div>
-                   <div className="space-y-3 bg-black/20 p-4 rounded-2xl border border-white/5">
-                      <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Pieces Stitched</span><span className="font-black text-white text-lg">{t.pieces}</span></div>
-                      <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Total Earned</span><span className="font-black text-[#cdfc4c]">₹{t.earned.toLocaleString()}</span></div>
-                      <div className="flex justify-between items-center text-sm"><span className="text-gray-500 font-bold uppercase tracking-widest text-[10px]">Total Paid</span><span className="font-black text-sky-400">₹{t.paid.toLocaleString()}</span></div>
+
+                   {/* SELECTED PERIOD ACTIVITY */}
+                   <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5"><CalendarRange size={12}/> Activity in selected dates</div>
+                   
+                   <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="bg-black/40 p-4 rounded-2xl border border-gray-800">
+                         <div className="text-gray-500 font-bold uppercase tracking-widest text-[10px] mb-1">Earned</div>
+                         <div className="font-black text-[#cdfc4c] text-xl">₹{t.periodEarned.toLocaleString()}</div>
+                         <div className="text-[9px] text-gray-600 mt-1 font-mono">({t.periodPieces} pieces)</div>
+                      </div>
+                      <div className="bg-black/40 p-4 rounded-2xl border border-gray-800">
+                         <div className="text-gray-500 font-bold uppercase tracking-widest text-[10px] mb-1">Paid</div>
+                         <div className="font-black text-sky-400 text-xl">₹{t.periodPaid.toLocaleString()}</div>
+                      </div>
                    </div>
-                   <div className="mt-4 flex justify-between items-center">
-                      <span className="text-gray-400 font-black uppercase tracking-widest text-[10px]">Current Balance</span>
-                      <span className={`font-black text-2xl ${t.earned - t.paid > 0 ? 'text-rose-500' : 'text-gray-500'}`}>₹{(t.earned - t.paid).toLocaleString()}</span>
+                   
+                   <div className="mt-auto flex justify-between items-center border-t border-gray-800 pt-4">
+                      <span className="text-gray-400 font-black uppercase tracking-widest text-[10px]">Net change in period</span>
+                      <span className={`font-black text-lg ${(t.periodEarned - t.periodPaid) > 0 ? 'text-[#cdfc4c]' : (t.periodEarned - t.periodPaid < 0 ? 'text-sky-400' : 'text-gray-500')}`}>
+                         {(t.periodEarned - t.periodPaid) > 0 ? '+' : ''}₹{(t.periodEarned - t.periodPaid).toLocaleString()}
+                      </span>
                    </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </div>
