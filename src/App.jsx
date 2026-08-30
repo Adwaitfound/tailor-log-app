@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter, BarChart3, TrendingUp, AlertTriangle, Calendar
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter, BarChart3, TrendingUp, AlertTriangle, Calendar, ChevronRight, ChevronLeft
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -67,6 +67,7 @@ export default function App() {
   const [taskProductSearch, setTaskProductSearch] = useState('');
   const [taskFilterOption, setTaskFilterOption] = useState('All');
   const [expandedPlatforms, setExpandedPlatforms] = useState({});
+  const [activeStackIndex, setActiveStackIndex] = useState({}); // Stores the Cover Flow index per tailor
 
   const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '', workType: 'Both' });
 
@@ -75,6 +76,7 @@ export default function App() {
     tailor: '', product: '', sizes: { XXS: 0, XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 }, pieceRate: 250, platform: 'Shopify / Website', orderNumber: '', workType: 'Both'
   });
 
+  // 3-IMAGE QC SYSTEM STATES
   const [imageFiles, setImageFiles] = useState({ chest: null, waist: null, hip: null });
   const [imagePreviews, setImagePreviews] = useState({ chest: null, waist: null, hip: null });
   const [activeCameraSlot, setActiveCameraSlot] = useState(null);
@@ -160,7 +162,7 @@ export default function App() {
 
   const [ledgerSortOrder, setLedgerSortOrder] = useState('desc'); 
   const [ledgerFilterType, setLedgerFilterType] = useState('all'); 
-  const [ledgerViewMode, setLedgerViewMode] = useState('tailor'); // Default to tailor view for easiest debt tracking
+  const [ledgerViewMode, setLedgerViewMode] = useState('tailor'); 
   const [statsTimeFilter, setStatsTimeFilter] = useState('30days');
   const [ledgerSearch, setLedgerSearch] = useState('');
 
@@ -172,7 +174,7 @@ export default function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
-  // Safe Local Storage Wrapper
+  // Safe Local Storage Wrapper - Prevents white screen crashes if browser blocks cookies
   const safeStorage = {
       getItem: (key) => { try { return localStorage.getItem(key); } catch(e) { return null; } },
       setItem: (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} },
@@ -205,6 +207,13 @@ export default function App() {
       .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
       .no-scrollbar::-webkit-scrollbar { display: none; }
       .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      
+      /* Essential for Cover Flow 3D Effect */
+      .preserve-3d { transform-style: preserve-3d; }
+      .perspective-[1200px] { perspective: 1200px; }
+      
+      /* Support for iPhone safe areas */
+      .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
     `;
     document.head.appendChild(style);
 
@@ -816,10 +825,10 @@ export default function App() {
                   quantity: selQty,
                   status: 'pending',
                   workType: 'Stitch',
-                  pieceRate: 120, // Override base piece rate for new stitch task
+                  pieceRate: 120, 
                   startedBy: null,
                   startedAt: null,
-                  assignee: 'Any', // Ensure it gets thrown back to pool for Admin
+                  assignee: 'Any', 
                   createdAt: new Date().toISOString()
               });
            }
@@ -924,7 +933,6 @@ export default function App() {
     } else { document.exitFullscreen(); }
   };
 
-  // --- LEDGER FILTERING UPDATED FOR CUSTOM DATES ---
   const timeFilteredEntries = useMemo(() => {
     return entries.filter(e => {
       const d = new Date(e.date);
@@ -962,7 +970,6 @@ export default function App() {
     return result;
   }, [tailorFilteredEntries, ledgerFilterType, ledgerSortOrder, ledgerSearch]);
 
-  // PERIOD Totals (Based on selected date range)
   const periodTotals = useMemo(() => {
     return tailorFilteredEntries.reduce((acc, curr) => {
       if (curr.type === 'production' && curr.qcStatus !== 'rejected') { 
@@ -974,7 +981,6 @@ export default function App() {
     }, { pieces: 0, earned: 0, paid: 0 });
   }, [tailorFilteredEntries]);
 
-  // LIFETIME Totals (Used to calculate true Pending Balance so money isn't "lost" outside the date filter)
   const lifetimeTotals = useMemo(() => {
     const matchingEntries = selectedTailorFilter === 'All' ? entries : entries.filter(e => e.tailor === selectedTailorFilter);
     return matchingEntries.reduce((acc, curr) => {
@@ -1022,8 +1028,6 @@ export default function App() {
 
   const groupedByTailor = useMemo(() => {
     const groups = {};
-    
-    // 1. Calculate LIFETIME balances for all active tailors
     entries.forEach(e => {
         if (!groups[e.tailor]) groups[e.tailor] = { lifetimeEarned: 0, lifetimePaid: 0, periodPieces: 0, periodEarned: 0, periodPaid: 0 };
         if (e.type === 'production' && e.qcStatus !== 'rejected') {
@@ -1033,7 +1037,6 @@ export default function App() {
         }
     });
 
-    // 2. Calculate PERIOD specific stats based on the custom date range
     finalLedgerEntries.forEach(e => {
       if (!groups[e.tailor]) groups[e.tailor] = { lifetimeEarned: 0, lifetimePaid: 0, periodPieces: 0, periodEarned: 0, periodPaid: 0 };
       if (e.type === 'production' && e.qcStatus !== 'rejected') {
@@ -1045,9 +1048,9 @@ export default function App() {
     });
     
     return Object.entries(groups)
-      .filter(([name, data]) => data.lifetimeEarned > 0 || data.lifetimePaid > 0) // Only show tailors who actually have data
+      .filter(([name, data]) => data.lifetimeEarned > 0 || data.lifetimePaid > 0)
       .map(([name, data]) => ({ name, ...data }))
-      .sort((a, b) => (b.lifetimeEarned - b.lifetimePaid) - (a.lifetimeEarned - a.lifetimePaid)); // Sort by who is owed the most money
+      .sort((a, b) => (b.lifetimeEarned - b.lifetimePaid) - (a.lifetimeEarned - a.lifetimePaid));
   }, [entries, finalLedgerEntries]);
 
   const groupedByPlatform = useMemo(() => {
@@ -1128,42 +1131,42 @@ export default function App() {
     );
   };
 
-  const renderPhotoUploader = (currentWorkType = 'Both') => {
+  const renderPhotoUploader = (currentWorkType = 'Both', layout = 'grid') => {
     const isCut = currentWorkType === 'Cut';
     const slots = isCut ? ['chest'] : ['chest', 'waist', 'hip'];
-    
+
     return (
-      <div className="pt-4 border-t border-gray-800">
-        <label className="block text-[10px] uppercase tracking-widest font-black text-gray-400 mb-4 text-center">
+      <div className={layout === 'horizontal' ? '' : 'pt-4 border-t border-gray-800'}>
+        {layout !== 'horizontal' && <label className="block text-[10px] uppercase tracking-widest font-black text-gray-400 mb-4 text-center">
           {isCut ? 'QC Photo (1 Required for Fabric Proof)' : 'QC Photos (3 Required)'}
-        </label>
+        </label>}
         
-        <div className={`grid gap-3 ${isCut ? 'grid-cols-1 max-w-xs mx-auto' : 'grid-cols-3'}`}>
+        <div className={`flex gap-3 ${layout === 'horizontal' ? 'flex-row justify-center' : (isCut ? 'flex-col max-w-xs mx-auto' : 'grid grid-cols-3')}`}>
           {slots.map(slot => (
-             <div key={slot} className="flex flex-col gap-2">
+             <div key={slot} className={`flex flex-col gap-2 ${layout === 'horizontal' ? 'w-24 md:w-32' : ''}`}>
                  <div className="text-[10px] uppercase tracking-widest font-bold text-gray-500 text-center">
                    {isCut && slot === 'chest' ? 'Fabric Proof' : slot}
                  </div>
                  {!imagePreviews[slot] ? (
-                    <div className="flex flex-col gap-2">
-                        <label className="w-full h-12 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative">
+                    <div className={`flex gap-2 ${layout === 'horizontal' ? 'h-14 md:h-16' : 'flex-col'}`}>
+                        <label className={`flex-1 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative ${layout !== 'horizontal' ? 'h-12 w-full' : ''}`}>
                             <input type="file" accept="image/*" capture="environment" onChange={(e) => handleImageChange(e, slot)} className="absolute inset-0 opacity-0 cursor-pointer" />
                             <ImageIcon size={16}/>
                         </label>
-                        <button type="button" onClick={() => startCamera(slot)} className="w-full h-12 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors">
+                        <button type="button" onClick={() => startCamera(slot)} className={`flex-1 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors ${layout !== 'horizontal' ? 'h-12 w-full' : ''}`}>
                             <Camera size={16}/>
                         </button>
                     </div>
                  ) : (
-                    <div className="relative w-full h-28 bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10">
+                    <div className={`relative w-full ${layout === 'horizontal' ? 'h-14 md:h-16' : 'h-28'} bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10`}>
                         <img src={imagePreviews[slot]} className="w-full h-full object-cover opacity-80" />
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <button type="button" onClick={() => {
                                 setImagePreviews(p => ({...p, [slot]: null}));
                                 setImageFiles(p => ({...p, [slot]: null}));
-                            }} className="p-2.5 bg-rose-500 hover:bg-rose-600 transition-colors text-white rounded-full shadow-lg"><Trash2 size={16}/></button>
+                            }} className={`p-2 ${layout === 'horizontal' ? 'bg-rose-500' : 'p-2.5 bg-rose-500'} hover:bg-rose-600 transition-colors text-white rounded-full shadow-lg`}><Trash2 size={layout === 'horizontal' ? 12 : 16}/></button>
                         </div>
-                        <div className="absolute bottom-1 right-1 bg-[#cdfc4c] text-black text-[9px] font-black px-1.5 py-0.5 rounded shadow flex items-center gap-1"><CheckCircle size={10}/></div>
+                        <div className="absolute bottom-1 right-1 bg-[#cdfc4c] text-black text-[9px] font-black px-1 py-0.5 rounded shadow flex items-center gap-1"><CheckCircle size={8}/></div>
                     </div>
                  )}
              </div>
@@ -1186,9 +1189,10 @@ export default function App() {
     }, {});
 
     return (
-      <div className={`w-full ${isFullscreen ? 'max-w-none' : ''} space-y-6 animate-in fade-in`}>
+      <div className={`w-full ${isFullscreen ? 'h-screen flex flex-col fixed inset-0 z-50 bg-[#0a0a0a]' : 'animate-in fade-in'} overflow-hidden`}>
         
-        <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 mb-8 relative ${isFullscreen ? 'p-6 bg-[#111] border-b border-gray-800 sticky top-0 z-40 shadow-xl' : 'px-4'}`}>
+        {/* Header Bar */}
+        <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 relative z-40 ${isFullscreen ? 'p-6 bg-[#0a0a0a]/90 backdrop-blur-xl border-b border-gray-800 shadow-xl shrink-0' : 'px-4 mb-8'}`}>
            <div className="text-left flex-1 w-full flex flex-col sm:flex-row items-start sm:items-center gap-4">
              <div>
                <h2 className={`font-black tracking-tight text-white flex items-center justify-center sm:justify-start gap-3 ${isFullscreen ? 'text-4xl md:text-5xl' : 'text-3xl'}`}>
@@ -1220,126 +1224,208 @@ export default function App() {
             <h3 className="text-xl font-bold text-gray-500 mb-1">The workshop is quiet right now.</h3>
           </div>
         ) : (
-          <div className={`space-y-8 ${isFullscreen ? 'px-6 pb-6' : 'px-2 md:px-0'}`}>
+          <div className={`flex-1 flex flex-col w-full relative ${isFullscreen ? 'overflow-hidden' : 'px-2 md:px-0'}`}>
             {Object.entries(tasksByTailor).map(([tailorName, items]) => {
               const isMyWork = prodForm.tailor === tailorName || role === 'admin';
-              
+              if (isFullscreen && !isMyWork) return null;
+
+              const currentIndex = activeStackIndex[tailorName] || 0;
+              const selectedSubTasks = items.filter(st => selectedSubTaskIds.has(st.subId));
+              const hasSelection = selectedSubTasks.length > 0;
+              const requiresThree = selectedSubTasks.some(st => st.workType !== 'Cut');
+              const uploaderWorkType = requiresThree ? 'Both' : 'Cut';
+              const canSubmit = hasSelection && (requiresThree ? (imagePreviews.chest && imagePreviews.waist && imagePreviews.hip) : imagePreviews.chest);
+
               return (
-                <div key={tailorName} className="bg-[#111] border border-purple-900/50 rounded-3xl overflow-hidden shadow-2xl relative flex flex-col">
-                  <div className="absolute top-0 left-0 w-full h-1.5 bg-purple-500"></div>
+                <div key={tailorName} className={`w-full flex flex-col h-full relative ${isFullscreen ? 'flex-1 overflow-hidden' : 'mb-12 border border-gray-800 rounded-[3rem] overflow-hidden'}`}>
                   
-                  <div className="p-6 border-b border-gray-800 flex flex-wrap items-center justify-between gap-4 bg-[#0a0a0a]">
-                     <div className="flex items-center gap-4">
-                       <div className="w-14 h-14 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
+                  {/* Tailor Header - Floating on Top */}
+                  <div className={`p-6 flex flex-wrap items-center justify-between gap-4 z-40 bg-gradient-to-b from-[#0a0a0a]/90 to-transparent pointer-events-none absolute top-0 left-0 w-full`}>
+                     <div className="flex items-center gap-4 pointer-events-auto">
+                       <div className="w-14 h-14 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)] backdrop-blur-xl">
                           <User size={24}/>
                        </div>
-                       <div>
+                       <div className="drop-shadow-lg">
                           <h3 className="text-3xl font-black text-white">{tailorName}</h3>
                           <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-1"><Scissors size={12}/> {items.length} active pieces</div>
                        </div>
                      </div>
-                     {isMyWork && items.filter(st => selectedSubTaskIds.has(st.subId)).length > 0 && (
-                       <span className="bg-[#cdfc4c] text-black text-xs font-black px-4 py-2 rounded-xl shadow-lg flex items-center gap-2">
-                         <CheckCircle size={16}/> {items.filter(st => selectedSubTaskIds.has(st.subId)).length} Selected
-                       </span>
-                     )}
                   </div>
 
-                  <div className="p-6 bg-[#0a0a0a]/50">
-                    <div className="flex overflow-x-auto gap-5 pb-6 custom-scrollbar snap-x snap-mandatory items-stretch">
-                       {items.map(st => {
-                          const entryImage = findProductImage(st.product);
-                          const startTime = new Date(st.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                          const isSelected = selectedSubTaskIds.has(st.subId);
-                          
-                          return (
-                            <div key={st.subId} onClick={() => isMyWork && toggleSubTaskSelection(st.subId)} className={`group flex flex-col rounded-2xl border-2 transition-all overflow-hidden relative shrink-0 snap-start w-[260px] sm:w-[300px] lg:w-[340px] ${!isMyWork ? 'border-gray-800 bg-black opacity-60' : (isSelected ? 'border-[#cdfc4c] shadow-[0_0_20px_rgba(205,252,76,0.15)] cursor-pointer translate-y-[-4px]' : 'border-gray-800 hover:border-gray-600 cursor-pointer')}`}>
-                               
-                               <div className="w-full aspect-[3/4] relative bg-black overflow-hidden shrink-0">
-                                 {entryImage ? (
-                                    <img src={entryImage} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-110" />
-                                 ) : (
-                                    <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>
-                                 )}
+                  {/* Main Interaction Area */}
+                  <div className={`flex flex-col w-full flex-1 relative ${isFullscreen ? 'h-full' : 'bg-[#0a0a0a] min-h-[650px]'}`}>
+                     
+                     {/* The Cover Flow Track */}
+                     <div className="flex-1 relative flex items-center justify-center overflow-hidden w-full h-full bg-[#050505]">
+                        <div className="absolute inset-0 flex items-center justify-center opacity-[0.02] pointer-events-none">
+                           <PoshakhLogo size={800} />
+                        </div>
+
+                        {/* Pagination Counter Sidebar */}
+                        {items.length > 1 && (
+                           <div className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-6 pointer-events-none">
+                              <div className="bg-[#111]/80 backdrop-blur-xl border border-gray-700 rounded-full px-2 py-4 md:px-3 md:py-6 flex flex-col items-center justify-center gap-4 shadow-[0_0_30px_rgba(0,0,0,0.8)]">
+                                 <button onClick={(e) => {
+                                   e.stopPropagation();
+                                   setActiveStackIndex(p => ({...p, [tailorName]: (currentIndex - 1 + items.length) % items.length}));
+                                 }} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center pointer-events-auto hover:bg-gray-800 transition-colors"><ChevronLeft size={20}/></button>
                                  
-                                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/30 pointer-events-none transition-opacity duration-300"></div>
+                                 <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gray-800 flex items-center justify-center text-white font-black text-base md:text-lg border border-gray-600">{items.length}</div>
+                                 <div className="w-0.5 h-10 md:h-16 bg-gray-700 rounded-full"></div>
+                                 <div className="text-gray-500 text-[9px] md:text-[10px] font-black uppercase tracking-widest whitespace-nowrap" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Pending In Stack</div>
+                                 
+                                 <button onClick={(e) => {
+                                   e.stopPropagation();
+                                   setActiveStackIndex(p => ({...p, [tailorName]: (currentIndex + 1) % items.length}));
+                                 }} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center pointer-events-auto hover:bg-gray-800 transition-colors"><ChevronRight size={20}/></button>
+                              </div>
+                           </div>
+                        )}
 
-                                 <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
-                                     <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-[10px] font-black flex items-center gap-1.5 shadow-lg ${st.workType === 'Cut' ? 'bg-yellow-500 text-black border-yellow-400' : (st.workType === 'Stitch' ? 'bg-blue-500 text-white border-blue-400' : 'bg-purple-500 text-white border-purple-400')}`}>
-                                       {st.workType === 'Cut' ? '✂️ CUT ONLY' : (st.workType === 'Stitch' ? '🧵 STITCH ONLY' : '✂️+🧵 BOTH')}
-                                     </span>
-                                 </div>
+                        <div className={`w-full h-full relative flex items-center perspective-[1200px] preserve-3d transition-transform duration-500 ${hasSelection ? '-translate-y-24 md:-translate-y-28' : ''}`}>
+                           {items.map((st, i) => {
+                              const entryImage = findProductImage(st.product);
+                              const startTime = new Date(st.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                              const isSelected = selectedSubTaskIds.has(st.subId);
+                              
+                              const diff = (i - currentIndex + items.length) % items.length;
+                              let position = diff;
+                              if (diff > items.length / 2) position -= items.length;
 
-                                 {isMyWork && (
-                                   <div className="absolute top-4 right-4 z-10">
-                                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all duration-300 shadow-xl backdrop-blur-md ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/40 bg-black/40 group-hover:border-white/80'}`}>
-                                         {isSelected && <CheckCircle size={20} className="text-black" />}
+                              const isCenter = position === 0;
+                              const isVisible = Math.abs(position) <= 2;
+                              
+                              const translateX = position * (isFullscreen ? 45 : 35); 
+                              const translateZ = Math.abs(position) * -200; 
+                              const rotateY = position * -25; 
+                              
+                              const blurAmount = isCenter ? 0 : Math.abs(position) * 4;
+                              const opacity = isCenter ? 1 : (isVisible ? Math.max(1 - (Math.abs(position) * 0.4), 0.3) : 0);
+                              const zIndex = 50 - Math.abs(position);
+
+                              return (
+                                <div 
+                                  key={st.subId}
+                                  onClick={() => {
+                                    if (!isCenter && isMyWork && isVisible) {
+                                      setActiveStackIndex(p => ({...p, [tailorName]: i}));
+                                    } else if (isCenter && isMyWork) {
+                                      toggleSubTaskSelection(st.subId);
+                                    }
+                                  }}
+                                  className={`absolute top-1/2 left-1/2 rounded-[2.5rem] border-[3px] overflow-hidden flex flex-col justify-end backdrop-blur-xl
+                                    ${isMyWork ? (isCenter ? 'cursor-pointer' : 'cursor-pointer hover:scale-[1.02]') : 'opacity-50 grayscale pointer-events-none'} 
+                                    ${isSelected && isCenter ? 'border-[#cdfc4c] shadow-[0_0_50px_rgba(205,252,76,0.3)]' : 'border-gray-800 shadow-[0_30px_60px_rgba(0,0,0,0.8)]'}
+                                  `}
+                                  style={{
+                                     transform: `translate(-50%, -50%) translateX(${translateX}vw) translateZ(${translateZ}px) rotateY(${rotateY}deg)`,
+                                     zIndex,
+                                     opacity,
+                                     filter: `blur(${blurAmount}px)`,
+                                     visibility: opacity === 0 ? 'hidden' : 'visible',
+                                     width: isFullscreen ? 'min(85vw, 600px)' : 'min(90vw, 500px)', 
+                                     height: isFullscreen ? '75vh' : '650px',
+                                     transition: 'transform 0.8s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.8s ease, filter 0.8s ease'
+                                  }}
+                                >
+                                   {entryImage ? (
+                                      <img src={entryImage} className="absolute inset-0 w-full h-full object-cover object-top opacity-90 transition-transform duration-700 group-hover:scale-110" />
+                                   ) : (
+                                      <div className="absolute inset-0 bg-gray-900 flex items-center justify-center"><ImageIcon className="text-gray-800 w-32 h-32 opacity-50" /></div>
+                                   )}
+                                   
+                                   {/* Gradients */}
+                                   <div className={`absolute inset-0 transition-opacity duration-500 ${isSelected && isCenter ? 'bg-gradient-to-t from-[#cdfc4c]/30 via-black/40 to-black/10' : 'bg-gradient-to-t from-black via-black/50 to-black/10'}`}></div>
+
+                                   {/* Top Badges */}
+                                   <div className="absolute top-6 left-6 z-20 flex flex-col gap-3">
+                                       <span className={`px-4 py-2 rounded-xl backdrop-blur-xl text-xs font-black flex items-center gap-1.5 shadow-2xl border ${st.workType === 'Cut' ? 'bg-yellow-500/90 text-black border-yellow-400' : (st.workType === 'Stitch' ? 'bg-blue-500/90 text-white border-blue-400' : 'bg-purple-500/90 text-white border-purple-400')}`}>
+                                         {st.workType === 'Cut' ? '✂️ CUT ONLY' : (st.workType === 'Stitch' ? '🧵 STITCH ONLY' : '✂️+🧵 BOTH')}
+                                       </span>
+                                   </div>
+
+                                   {/* Selection Checkmark */}
+                                   {isMyWork && isCenter && (
+                                     <div className="absolute top-6 right-6 z-20">
+                                        <div className={`w-14 h-14 rounded-full border-4 flex items-center justify-center transition-all duration-300 shadow-2xl backdrop-blur-xl ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/20 bg-black/40 hover:border-white/60 hover:bg-black/60'}`}>
+                                           {isSelected && <CheckCircle size={28} className="text-black" />}
+                                        </div>
+                                     </div>
+                                   )}
+
+                                   {/* Bottom Info Panel */}
+                                   <div className="relative w-full p-6 md:p-8 z-20 flex flex-col justify-end pointer-events-none mt-auto">
+                                      <div className="mb-4 flex items-end justify-between pointer-events-auto">
+                                         {/* Giant Size Pill */}
+                                         <div className={`text-6xl md:text-7xl font-black uppercase tracking-tighter px-6 py-2 rounded-3xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] border-[4px] transition-colors inline-block ${isSelected ? 'bg-[#cdfc4c] text-black border-[#cdfc4c]' : 'bg-black/80 text-[#cdfc4c] border-[#cdfc4c] backdrop-blur-xl'}`}>
+                                            SIZE {st.size}
+                                         </div>
+                                         
+                                         {isMyWork && isCenter && (
+                                            <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-14 h-14 rounded-full bg-black/80 border-2 border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all backdrop-blur-xl shadow-2xl shrink-0 ml-4" title="Drop Item">
+                                               <Trash2 size={20} />
+                                            </button>
+                                         )}
+                                      </div>
+
+                                      <div className="flex flex-col pointer-events-auto max-w-[80%] pr-4">
+                                        <div className="flex items-center gap-2 mb-2 opacity-90 drop-shadow-md">
+                                          <Activity size={14} className="text-purple-300"/>
+                                          <span className="text-[10px] font-bold uppercase tracking-widest text-purple-200">{startTime}</span>
+                                        </div>
+                                        <div className={`font-black text-2xl md:text-4xl leading-tight line-clamp-2 drop-shadow-[0_4px_15px_rgba(0,0,0,0.8)] mb-3 ${isSelected ? 'text-white' : 'text-gray-100'}`}>
+                                           {formatProductName(st.product)}
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <div className="text-[10px] text-white font-bold bg-purple-900/80 border border-purple-500/50 px-3 py-1.5 rounded-lg uppercase tracking-widest shadow-xl backdrop-blur-md">
+                                            {st.platform === 'Shopify / Website' ? 'Shopify' : (st.platform || 'Shopify')}
+                                          </div>
+                                          {st.orderNumber && (
+                                            <div className="text-[10px] text-white font-bold bg-blue-900/80 border border-blue-500/50 px-3 py-1.5 rounded-lg uppercase tracking-widest shadow-xl backdrop-blur-md">
+                                              Ord: {st.orderNumber}
+                                            </div>
+                                          )}
+                                        </div>
                                       </div>
                                    </div>
-                                 )}
+                                </div>
+                              )
+                           })}
+                        </div>
+                     </div>
 
-                                 <div className="absolute bottom-0 left-0 w-full p-4 z-10">
-                                    <div className="flex flex-col">
-                                      <div className="flex items-center gap-2 mb-2 opacity-90">
-                                        <Activity size={12} className="text-purple-400"/>
-                                        <span className="text-[10px] text-purple-200 font-bold uppercase tracking-widest">{startTime}</span>
-                                      </div>
-                                      <div className={`font-black text-lg leading-tight line-clamp-2 ${isSelected ? 'text-[#cdfc4c]' : 'text-white'}`}>
-                                         {formatProductName(st.product)}
-                                      </div>
-                                      <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                                        <div className="text-[9px] text-purple-200 font-bold bg-purple-900/40 border border-purple-500/30 px-2 py-0.5 rounded uppercase tracking-widest backdrop-blur-sm">
-                                          {st.platform === 'Shopify / Website' ? 'Shopify' : (st.platform || 'Shopify')}
-                                        </div>
-                                        {st.orderNumber && (
-                                          <div className="text-[9px] text-blue-300 font-bold bg-blue-900/40 border border-blue-500/30 px-2 py-0.5 rounded uppercase tracking-widest backdrop-blur-sm">
-                                            Ord: {st.orderNumber}
-                                          </div>
-                                        )}
-                                      </div>
+                     {/* Bottom Submission Panel Sliding Over */}
+                     {isMyWork && (
+                        <div className={`absolute bottom-0 left-0 w-full z-50 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${hasSelection ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'}`}>
+                           <div className="bg-[#0a0a0a]/95 backdrop-blur-2xl border-t border-gray-800 p-6 pb-safe md:p-8 rounded-t-[2.5rem] shadow-[0_-30px_60px_rgba(0,0,0,0.8)] mx-auto max-w-6xl w-full">
+                              
+                              <div className="flex flex-col lg:flex-row items-center gap-6 lg:gap-8">
+                                 {/* Left: Selection Info */}
+                                 <div className="flex items-center gap-4 shrink-0 w-full lg:w-auto border-b lg:border-b-0 border-gray-800 pb-4 lg:pb-0">
+                                    <div className="w-14 h-14 rounded-full bg-[#cdfc4c]/10 flex items-center justify-center border border-[#cdfc4c]/30 text-[#cdfc4c]">
+                                       <CheckCircle size={28}/>
+                                    </div>
+                                    <div>
+                                       <div className="text-2xl font-black text-white">{selectedSubTasks.length} Selected</div>
+                                       <div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mt-1">Ready for QC</div>
                                     </div>
                                  </div>
-                               </div>
-                               
-                               <div className={`p-4 flex flex-1 items-center justify-between bg-[#111] transition-colors ${isSelected ? 'bg-[#cdfc4c]/10' : ''}`}>
-                                  <div className="flex items-center gap-2">
-                                     <span className={`text-sm px-3 py-1 rounded font-black uppercase ${isSelected ? 'bg-[#cdfc4c] text-black' : 'bg-gray-800 text-white'}`}>Size {st.size}</span>
-                                  </div>
-                                  
-                                  {isMyWork && (
-                                     <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-8 h-8 rounded-full bg-black border border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all" title="Drop Item">
-                                        <Trash2 size={14} />
-                                     </button>
-                                  )}
-                               </div>
-                            </div>
-                          )
-                       })}
-                    </div>
 
-                    {isMyWork && (
-                       <div className="mt-2 pt-6 border-t border-gray-800 max-w-3xl">
-                         {(() => {
-                            const selectedSubTasks = items.filter(st => selectedSubTaskIds.has(st.subId));
-                            const requiresThree = selectedSubTasks.some(st => st.workType !== 'Cut');
-                            const uploaderWorkType = requiresThree ? 'Both' : 'Cut';
-                            const hasSelection = selectedSubTasks.length > 0;
-                            
-                            const canSubmit = hasSelection && 
-                               (requiresThree ? (imagePreviews.chest && imagePreviews.waist && imagePreviews.hip) : imagePreviews.chest);
+                                 {/* Middle: Horizontal Photos */}
+                                 <div className="flex-1 w-full flex items-center justify-center lg:justify-start">
+                                    {renderPhotoUploader(uploaderWorkType, 'horizontal')}
+                                 </div>
 
-                            return (
-                              <>
-                                {hasSelection && renderPhotoUploader(uploaderWorkType)}
-                                <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className="w-full py-5 mt-6 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl disabled:opacity-50 transition-all shadow-lg shadow-[#cdfc4c]/10 text-xl">
-                                  {isUploading ? 'Submitting...' : (!hasSelection ? 'Select Finished Items' : (!canSubmit ? (requiresThree ? 'Add All 3 QC Photos to Submit' : 'Add Fabric Proof Photo to Submit') : `Submit ${selectedSubTasks.length} Checked Item(s)`))}
-                                </button>
-                              </>
-                            );
-                         })()}
-                       </div>
-                    )}
-
+                                 {/* Right: Submit Action */}
+                                 <div className="shrink-0 w-full lg:w-auto mt-4 lg:mt-0">
+                                    <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className={`w-full lg:w-64 py-5 text-black font-black tracking-wide rounded-2xl disabled:opacity-50 transition-all shadow-xl text-lg flex items-center justify-center gap-3 shrink-0 ${canSubmit ? 'bg-[#cdfc4c] hover:bg-[#b5e638] shadow-[#cdfc4c]/20' : 'bg-gray-700 text-gray-400 cursor-not-allowed'}`}>
+                                       {isUploading ? <><Loader2 className="animate-spin" size={24}/> Submitting...</> : (!canSubmit ? (requiresThree ? 'Add All 3 QC Photos' : 'Add Fabric Proof') : `Submit ${selectedSubTasks.length} Checked`)}
+                                    </button>
+                                 </div>
+                              </div>
+                           </div>
+                        </div>
+                     )}
                   </div>
                 </div>
               )
@@ -1554,7 +1640,7 @@ export default function App() {
           </div>
         )}
 
-        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6">Please go to "Add Batch" and select your name first!</div>}
+        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6 mx-4">Please go to "Add Batch" and select your name first!</div>}
 
         {sortedPlatforms.length === 0 && filteredPendingTasks.length === 0 && (
           <div className="bg-[#111] border border-gray-800 rounded-3xl p-16 text-center max-w-2xl mx-auto mt-12">
@@ -2613,7 +2699,7 @@ export default function App() {
                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
             
-            <div className="flex overflow-x-auto gap-4 w-full p-4 md:p-8 snap-x snap-mandatory custom-scrollbar items-center">
+            <div className="flex overflow-x-auto gap-4 w-full p-4 md:p-8 snap-x snap-mandatory custom-scrollbar items-center justify-center">
                 {Object.entries(lightboxData.urls).filter(([_, url]) => url).map(([slot, url]) => (
                     <div key={slot} className="shrink-0 w-[85vw] md:w-[45vw] lg:w-[30vw] snap-center flex flex-col items-center">
                         <div className="bg-[#cdfc4c] text-black text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-4 shadow-lg">{slot === 'chest' && lightboxData.workType === 'Cut' ? 'Fabric Proof' : slot + ' Measurement'}</div>
@@ -2673,8 +2759,6 @@ export default function App() {
         </div>
       )}
 
-      {renderCameraModal()}
-
       {toast && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in">
           <div className={`px-6 py-3 rounded-full shadow-2xl font-bold text-sm tracking-wide ${toast.type === 'error' ? 'bg-rose-500 text-white' : 'bg-[#cdfc4c] text-black'}`}>
@@ -2716,7 +2800,7 @@ export default function App() {
         </header>
       )}
 
-      <main className={`flex-1 w-full bg-[#0a0a0a] ${activeTab === 'live' ? (isFullscreen ? 'p-0' : 'p-2 md:p-4') : 'p-4 md:p-8'} print:p-0 print:bg-white transition-all`}>
+      <main className={`flex-1 w-full bg-[#0a0a0a] ${activeTab === 'live' ? 'p-0' : 'p-4 md:p-8'} print:p-0 print:bg-white transition-all`}>
         {activeTab === 'tasks' && renderTasks()}
         {activeTab === 'live' && renderLiveQueue()}
         {activeTab === 'add-batch' && renderAddBatch()}
