@@ -66,8 +66,15 @@ export default function App() {
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [taskProductSearch, setTaskProductSearch] = useState('');
   const [taskFilterOption, setTaskFilterOption] = useState('All');
+  const [liveTailorFilter, setLiveTailorFilter] = useState('All');
   const [expandedPlatforms, setExpandedPlatforms] = useState({});
-  const [activeStackIndex, setActiveStackIndex] = useState({}); // Stores the Cover Flow index per tailor
+  const [activeStackIndex, setActiveStackIndex] = useState({});
+
+  // Swipe & Wheel Tracking
+  const [touchStart, setTouchStart] = useState(null);
+  const [touchEnd, setTouchEnd] = useState(null);
+  const lastWheelTime = useRef(0);
+  const wheelAccumulator = useRef({ x: 0, y: 0 });
 
   const [taskForm, setTaskForm] = useState({ product: '', size: '', quantity: 1, platform: 'Shopify / Website', assignee: 'Any', priority: '3', orderNumber: '', workType: 'Both' });
 
@@ -76,7 +83,6 @@ export default function App() {
     tailor: '', product: '', sizes: { XXS: 0, XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 }, pieceRate: 250, platform: 'Shopify / Website', orderNumber: '', workType: 'Both'
   });
 
-  // 3-IMAGE QC SYSTEM STATES
   const [imageFiles, setImageFiles] = useState({ chest: null, waist: null, hip: null });
   const [imagePreviews, setImagePreviews] = useState({ chest: null, waist: null, hip: null });
   const [activeCameraSlot, setActiveCameraSlot] = useState(null);
@@ -154,7 +160,6 @@ export default function App() {
   const [setupForm, setSetupForm] = useState({ tailorsText: '', productsText: '' });
   const [reportForm, setReportForm] = useState({ type: 'ledger', startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0], tailor: 'All' });
 
-  // --- CUSTOM DATE RANGE FOR LEDGER ---
   const [ledgerStartDate, setLedgerStartDate] = useState(() => {
     const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0];
   });
@@ -174,7 +179,6 @@ export default function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [signatureLocked, setSignatureLocked] = useState(false);
 
-  // Safe Local Storage Wrapper - Prevents white screen crashes if browser blocks cookies
   const safeStorage = {
       getItem: (key) => { try { return localStorage.getItem(key); } catch(e) { return null; } },
       setItem: (key, val) => { try { localStorage.setItem(key, val); } catch(e) {} },
@@ -189,6 +193,15 @@ export default function App() {
       return newBlacklist;
   };
 
+  // Re-added critical function that caused crashes if missing!
+  const getUrgencyStyles = (createdAt) => {
+    if (!createdAt) return 'border-gray-800 bg-[#111]';
+    const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
+    if (hours > 48) return 'border-red-500 bg-red-950/20 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse-slow';
+    if (hours > 24) return 'border-orange-500 bg-orange-950/20';
+    return 'border-gray-800 bg-[#111]';
+  };
+
   useEffect(() => {
     const handleFullscreenChange = () => { setIsFullscreen(!!document.fullscreenElement); };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -199,7 +212,7 @@ export default function App() {
     const style = document.createElement('style');
     style.innerHTML = `
       #root { max-width: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
-      body, html { width: 100%; margin: 0; padding: 0; overflow-x: hidden; background-color: #0a0a0a; }
+      body, html { width: 100%; margin: 0; padding: 0; overflow-x: hidden; background-color: #0a0a0a; touch-action: pan-y; }
       .custom-scrollbar::-webkit-scrollbar { height: 8px; width: 6px; }
       .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 10px; }
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
@@ -208,11 +221,8 @@ export default function App() {
       .no-scrollbar::-webkit-scrollbar { display: none; }
       .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       
-      /* Essential for Cover Flow 3D Effect */
       .preserve-3d { transform-style: preserve-3d; }
-      .perspective-[1200px] { perspective: 1200px; }
-      
-      /* Support for iPhone safe areas */
+      .perspective-[1500px] { perspective: 1500px; }
       .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
     `;
     document.head.appendChild(style);
@@ -817,7 +827,7 @@ export default function App() {
               await addDoc(collection(db, 'priority_tasks'), { ...taskDataWithoutId, quantity: selQty, status: 'completed' });
            }
 
-           // AUTO SPAWN ENGINE - CUT TO STITCH
+           // AUTO SPAWN ENGINE
            if (data.workType === 'Cut') {
               const { id, ...spawndata } = originalDoc;
               await addDoc(collection(db, 'priority_tasks'), {
@@ -1068,48 +1078,6 @@ export default function App() {
     return findProductImage(prodForm.product);
   }, [prodForm.product, products]);
 
-  const getUrgencyStyles = (createdAt) => {
-    if (!createdAt) return 'border-gray-800 bg-[#111]';
-    const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
-    if (hours > 48) return 'border-red-500 bg-red-950/20 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse-slow';
-    if (hours > 24) return 'border-orange-500 bg-orange-950/20';
-    return 'border-gray-800 bg-[#111]';
-  };
-
-  const renderLogin = () => (
-    <div className="min-h-screen w-full bg-[#0a0a0a] flex items-center justify-center p-6">
-      <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
-        <div className="text-center mb-10">
-          <div className="w-16 h-16 bg-white flex items-center justify-center rounded-2xl shadow-lg mx-auto mb-6"><PoshakhLogo size={36} /></div>
-          <h1 className="text-3xl font-black tracking-tight text-white mb-2">Poshakh Sync</h1>
-          <p className="text-gray-400 text-sm">Select your workspace to continue.</p>
-        </div>
-
-        {loginStep === 'select' ? (
-          <div className="space-y-4">
-            <button onClick={() => handleLogin('staff')} className="w-full bg-[#111] border border-gray-800 hover:border-gray-600 p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group">
-              <div className="w-12 h-12 rounded-full bg-gray-800 group-hover:bg-gray-700 flex items-center justify-center text-white transition-colors"><Shirt size={24} /></div>
-              <div className="text-center"><div className="text-lg font-bold text-white">Tailor / Staff</div><div className="text-xs text-gray-500 mt-1">Log daily production batches</div></div>
-            </button>
-            <button onClick={() => setLoginStep('pin')} className="w-full bg-[#cdfc4c] hover:bg-[#b5e638] p-6 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all group shadow-lg shadow-[#cdfc4c]/10">
-              <div className="w-12 h-12 rounded-full bg-black/10 group-hover:bg-black/20 flex items-center justify-center text-black transition-colors"><Lock size={24} /></div>
-              <div className="text-center"><div className="text-lg font-bold text-black">Admin Dashboard</div><div className="text-xs text-black/60 mt-1">Full access & financial ledger</div></div>
-            </button>
-          </div>
-        ) : (
-          <div className="bg-[#111] border border-gray-800 p-8 rounded-3xl animate-in slide-in-from-bottom-4">
-            <h2 className="text-xl font-bold text-white text-center mb-6">Enter Admin PIN</h2>
-            <div className="flex flex-col gap-4">
-              <input type="password" value={pinInput} onChange={(e) => setPinInput(e.target.value)} placeholder="****" className="w-full text-center tracking-[1em] font-black text-2xl py-4 bg-black border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none" autoFocus />
-              <button onClick={() => handleLogin('admin')} className="w-full py-4 bg-[#cdfc4c] text-black font-black tracking-wide rounded-xl">Unlock</button>
-              <button onClick={() => { setLoginStep('select'); setPinInput(''); }} className="w-full py-3 text-gray-500 hover:text-white text-sm font-bold">Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
   const renderCameraModal = () => {
     if (!isCameraOpen) return null;
     return (
@@ -1136,30 +1104,30 @@ export default function App() {
     const slots = isCut ? ['chest'] : ['chest', 'waist', 'hip'];
 
     return (
-      <div className={layout === 'horizontal' ? '' : 'pt-4 border-t border-gray-800'}>
+      <div className={layout === 'horizontal' ? 'w-full px-4' : 'pt-4 border-t border-gray-800'}>
         {layout !== 'horizontal' && <label className="block text-[10px] uppercase tracking-widest font-black text-gray-400 mb-4 text-center">
           {isCut ? 'QC Photo (1 Required for Fabric Proof)' : 'QC Photos (3 Required)'}
         </label>}
         
-        <div className={`flex gap-3 ${layout === 'horizontal' ? 'flex-row justify-center' : (isCut ? 'flex-col max-w-xs mx-auto' : 'grid grid-cols-3')}`}>
+        <div className={`flex gap-3 ${layout === 'horizontal' ? 'flex-row justify-center w-full max-w-3xl mx-auto' : (isCut ? 'flex-col max-w-xs mx-auto' : 'grid grid-cols-3')}`}>
           {slots.map(slot => (
-             <div key={slot} className={`flex flex-col gap-2 ${layout === 'horizontal' ? 'w-24 md:w-32' : ''}`}>
+             <div key={slot} className={`flex flex-col gap-2 ${layout === 'horizontal' ? 'flex-1' : ''}`}>
                  <div className="text-[10px] uppercase tracking-widest font-bold text-gray-500 text-center">
                    {isCut && slot === 'chest' ? 'Fabric Proof' : slot}
                  </div>
                  {!imagePreviews[slot] ? (
-                    <div className={`flex gap-2 ${layout === 'horizontal' ? 'h-14 md:h-16' : 'flex-col'}`}>
-                        <label className={`flex-1 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative ${layout !== 'horizontal' ? 'h-12 w-full' : ''}`}>
+                    <div className={`flex gap-2 ${layout === 'horizontal' ? 'flex-col sm:flex-row h-16' : 'flex-col'}`}>
+                        <label className={`flex-1 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative ${layout !== 'horizontal' ? 'h-12 w-full' : 'h-full'}`}>
                             <input type="file" accept="image/*" capture="environment" onChange={(e) => handleImageChange(e, slot)} className="absolute inset-0 opacity-0 cursor-pointer" />
                             <ImageIcon size={16}/>
                         </label>
-                        <button type="button" onClick={() => startCamera(slot)} className={`flex-1 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors ${layout !== 'horizontal' ? 'h-12 w-full' : ''}`}>
+                        <button type="button" onClick={() => startCamera(slot)} className={`flex-1 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors ${layout !== 'horizontal' ? 'h-12 w-full' : 'h-full'}`}>
                             <Camera size={16}/>
                         </button>
                     </div>
                  ) : (
-                    <div className={`relative w-full ${layout === 'horizontal' ? 'h-14 md:h-16' : 'h-28'} bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10`}>
-                        <img src={imagePreviews[slot]} className="w-full h-full object-cover opacity-80" />
+                    <div className={`relative w-full ${layout === 'horizontal' ? 'h-16' : 'h-28'} bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10`}>
+                        <img src={imagePreviews[slot]} className="w-full h-full object-cover object-top opacity-80" />
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <button type="button" onClick={() => {
                                 setImagePreviews(p => ({...p, [slot]: null}));
@@ -1180,6 +1148,7 @@ export default function App() {
     const liveTasks = tasks.filter(t => t.status === 'in_progress');
     const tasksByTailor = liveTasks.reduce((acc, t) => {
       const tailor = t.startedBy || 'Unknown';
+      if (role === 'admin' && liveTailorFilter !== 'All' && tailor !== liveTailorFilter) return acc;
       if (!acc[tailor]) acc[tailor] = [];
       const qty = Number(t.quantity) || 1;
       for (let i = 0; i < qty; i++) {
@@ -1188,43 +1157,118 @@ export default function App() {
       return acc;
     }, {});
 
+    const handleTouchStart = (e) => {
+        setTouchEnd(null);
+        setTouchStart(e.targetTouches[0].clientX);
+    };
+
+    const handleTouchMove = (e) => {
+        setTouchEnd(e.targetTouches[0].clientX);
+    };
+
+    const navigateStack = (tailorName, newIndex, totalItems) => {
+        if (newIndex >= 0 && newIndex < totalItems) {
+            setActiveStackIndex(prev => ({ ...prev, [tailorName]: newIndex }));
+        }
+    };
+
+    const handleTouchEnd = (tailorName, totalItems, currentIndex) => {
+        if (!touchStart || !touchEnd) return;
+        const distance = touchStart - touchEnd;
+        const minSwipeDistance = 50;
+
+        if (distance > minSwipeDistance && currentIndex < totalItems - 1) {
+            navigateStack(tailorName, currentIndex + 1, totalItems);
+        }
+        if (distance < -minSwipeDistance && currentIndex > 0) {
+            navigateStack(tailorName, currentIndex - 1, totalItems);
+        }
+        setTouchStart(null);
+        setTouchEnd(null);
+    };
+
+    const handleWheel = (e, tailorName, totalItems, currentIndex) => {
+        const now = Date.now();
+        if (now - lastWheelTime.current > 150) {
+            wheelAccumulator.current = { x: 0, y: 0 };
+        }
+        lastWheelTime.current = now;
+
+        wheelAccumulator.current.x += e.deltaX;
+        wheelAccumulator.current.y += e.deltaY;
+
+        const threshold = 60; // Accumulation threshold
+
+        if (Math.abs(wheelAccumulator.current.x) > threshold || Math.abs(wheelAccumulator.current.y) > threshold) {
+            if (Math.abs(wheelAccumulator.current.x) > Math.abs(wheelAccumulator.current.y)) {
+                if (wheelAccumulator.current.x > 0 && currentIndex < totalItems - 1) {
+                    navigateStack(tailorName, currentIndex + 1, totalItems);
+                } else if (wheelAccumulator.current.x < 0 && currentIndex > 0) {
+                    navigateStack(tailorName, currentIndex - 1, totalItems);
+                }
+            } else {
+                if (wheelAccumulator.current.y > 0 && currentIndex < totalItems - 1) {
+                    navigateStack(tailorName, currentIndex + 1, totalItems);
+                } else if (wheelAccumulator.current.y < 0 && currentIndex > 0) {
+                    navigateStack(tailorName, currentIndex - 1, totalItems);
+                }
+            }
+            wheelAccumulator.current = { x: 0, y: 0 };
+            lastWheelTime.current = now + 400; // temporary lockout
+        }
+    };
+
     return (
-      <div className={`w-full ${isFullscreen ? 'h-screen flex flex-col fixed inset-0 z-50 bg-[#0a0a0a]' : 'animate-in fade-in'} overflow-hidden`}>
+      <div className={`w-full ${isFullscreen ? 'h-screen absolute inset-0 z-40 bg-[#0a0a0a]' : 'flex-1'} flex flex-col overflow-hidden animate-in fade-in relative`}>
         
-        {/* Header Bar */}
-        <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 relative z-40 ${isFullscreen ? 'p-6 bg-[#0a0a0a]/90 backdrop-blur-xl border-b border-gray-800 shadow-xl shrink-0' : 'px-4 mb-8'}`}>
-           <div className="text-left flex-1 w-full flex flex-col sm:flex-row items-start sm:items-center gap-4">
+        <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 p-4 md:p-6 z-40 absolute top-0 left-0 w-full pointer-events-none bg-gradient-to-b from-black/90 to-transparent pb-12`}>
+           <div className="text-left flex-1 w-full flex flex-col sm:flex-row items-start sm:items-center gap-4 pointer-events-auto">
              <div>
-               <h2 className={`font-black tracking-tight text-white flex items-center justify-center sm:justify-start gap-3 ${isFullscreen ? 'text-4xl md:text-5xl' : 'text-3xl'}`}>
-                 <Activity size={isFullscreen ? 36 : 28} className="text-purple-500"/> Live Floor
+               <h2 className="font-black tracking-tight text-white flex items-center gap-3 text-3xl">
+                 <Activity size={28} className="text-purple-500"/> Live Floor
                </h2>
-               <p className="text-gray-400 mt-2 text-center sm:text-left text-sm md:text-lg">Factory Production Dashboard</p>
+               <p className="text-gray-400 mt-1 text-sm md:text-base">Factory Production Dashboard</p>
              </div>
              
              {role === 'admin' && (
-               <div className="relative mt-2 sm:mt-0 sm:ml-6" title="Complete tasks as this tailor">
-                 <User size={16} className="absolute left-3 top-3.5 text-purple-400"/>
-                 <select value={prodForm.tailor} onChange={(e) => setProdForm({...prodForm, tailor: e.target.value})} className="w-full sm:w-auto pl-10 pr-8 py-3 bg-purple-900/20 border border-purple-500/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-purple-300 font-bold cursor-pointer">
-                   {tailors.map(t => <option key={t} value={t} className="bg-[#111] text-white">Completing As: {t}</option>)}
+               <div className="relative mt-2 sm:mt-0 sm:ml-6 shadow-xl" title="Filter live floor by tailor">
+                 <User size={16} className="absolute left-3 top-3 text-purple-400"/>
+                 <select value={liveTailorFilter} onChange={(e) => setLiveTailorFilter(e.target.value)} className="w-full sm:w-auto pl-10 pr-8 py-2.5 bg-purple-900/30 backdrop-blur-md border border-purple-500/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-purple-300 font-bold cursor-pointer transition-colors hover:bg-purple-900/50">
+                   <option value="All" className="bg-[#111] text-white">Viewing All Floor</option>
+                   {tailors.map(t => <option key={t} value={t} className="bg-[#111] text-white">Floor: {t}</option>)}
                  </select>
-                 <ChevronDown size={14} className="absolute right-3 top-4 text-purple-400 pointer-events-none"/>
+                 <ChevronDown size={14} className="absolute right-3 top-3.5 text-purple-400 pointer-events-none"/>
                </div>
              )}
            </div>
-           <button onClick={toggleFullScreen} className={`flex items-center justify-center gap-2 bg-purple-900/40 hover:bg-purple-500 border border-purple-500/50 hover:text-white px-5 py-3 rounded-xl text-sm font-bold transition-all shadow-lg w-full sm:w-auto shrink-0 ${isFullscreen ? 'text-white bg-purple-600' : 'text-purple-300'}`}>
-             {isFullscreen ? <><Minimize size={18}/> Exit Kiosk Mode</> : <><Maximize size={18}/> Enter Kiosk Mode</>}
-           </button>
+           
+           <div className="pointer-events-auto">
+             <button onClick={toggleFullScreen} className="flex items-center justify-center gap-2 bg-purple-900/40 hover:bg-purple-500 border border-purple-500/50 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-2xl backdrop-blur-md whitespace-nowrap">
+               {isFullscreen ? <><Minimize size={18}/> Exit Kiosk</> : <><Maximize size={18}/> Fullscreen</>}
+             </button>
+           </div>
         </div>
 
-        {!prodForm.tailor && role !== 'admin' && <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 p-4 rounded-xl text-sm font-bold text-center mb-6 mx-4">Please go to "Add Batch" and select your name to interact here!</div>}
+        {!prodForm.tailor && role !== 'admin' && (
+           <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 bg-yellow-500 text-black px-6 py-3 rounded-full shadow-2xl text-sm font-black whitespace-nowrap">
+               Go to "Add Batch" to select your name!
+           </div>
+        )}
 
         {Object.keys(tasksByTailor).length === 0 ? (
-          <div className="bg-[#111] border border-gray-800 rounded-3xl p-12 text-center max-w-4xl mx-auto m-4">
-            <Scissors size={48} className="mx-auto mb-4 text-gray-700 opacity-50" />
-            <h3 className="text-xl font-bold text-gray-500 mb-1">The workshop is quiet right now.</h3>
+          <div className="flex-1 flex flex-col items-center justify-center p-6 relative z-20 min-h-[60vh]">
+            <div className="bg-[#111] border border-gray-800 p-10 rounded-[3rem] shadow-2xl flex flex-col items-center max-w-lg mx-auto text-center">
+               <div className="w-24 h-24 bg-gray-900 rounded-full flex items-center justify-center mb-6 border border-gray-800">
+                  <Scissors size={40} className="text-gray-500" />
+               </div>
+               <h3 className="text-2xl font-black text-white mb-2">
+                  {liveTailorFilter !== 'All' ? `No active pieces for ${liveTailorFilter}.` : 'The floor is quiet right now.'}
+               </h3>
+               <p className="text-gray-500 text-sm font-bold">Waiting for tailors to start working on priority tasks.</p>
+            </div>
           </div>
         ) : (
-          <div className={`flex-1 flex flex-col w-full relative ${isFullscreen ? 'overflow-hidden' : 'px-2 md:px-0'}`}>
+          <div className="flex-1 flex flex-col w-full relative overflow-y-auto overflow-x-hidden custom-scrollbar snap-y snap-mandatory">
             {Object.entries(tasksByTailor).map(([tailorName, items]) => {
               const isMyWork = prodForm.tailor === tailorName || role === 'admin';
               if (isFullscreen && !isMyWork) return null;
@@ -1237,196 +1281,189 @@ export default function App() {
               const canSubmit = hasSelection && (requiresThree ? (imagePreviews.chest && imagePreviews.waist && imagePreviews.hip) : imagePreviews.chest);
 
               return (
-                <div key={tailorName} className={`w-full flex flex-col h-full relative ${isFullscreen ? 'flex-1 overflow-hidden' : 'mb-12 border border-gray-800 rounded-[3rem] overflow-hidden'}`}>
+                <div key={tailorName} className={`w-full ${isFullscreen ? 'h-screen' : 'h-[85vh] min-h-[600px]'} shrink-0 snap-start relative flex flex-col bg-[#050505] overflow-hidden border-b border-gray-900`}>
                   
-                  {/* Tailor Header - Floating on Top */}
-                  <div className={`p-6 flex flex-wrap items-center justify-between gap-4 z-40 bg-gradient-to-b from-[#0a0a0a]/90 to-transparent pointer-events-none absolute top-0 left-0 w-full`}>
-                     <div className="flex items-center gap-4 pointer-events-auto">
-                       <div className="w-14 h-14 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)] backdrop-blur-xl">
-                          <User size={24}/>
-                       </div>
-                       <div className="drop-shadow-lg">
-                          <h3 className="text-3xl font-black text-white">{tailorName}</h3>
-                          <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-1"><Scissors size={12}/> {items.length} active pieces</div>
-                       </div>
+                  <div className="absolute top-24 left-6 z-30 flex items-center gap-4 pointer-events-none drop-shadow-2xl">
+                     <div className="w-16 h-16 rounded-full bg-purple-900/40 border border-purple-500/50 flex items-center justify-center text-purple-400 shadow-[0_0_30px_rgba(168,85,247,0.3)] backdrop-blur-xl">
+                        <User size={28}/>
+                     </div>
+                     <div>
+                        <h3 className="text-4xl font-black text-white">{tailorName}</h3>
+                        <div className="text-xs text-purple-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-1"><Scissors size={12}/> {items.length} active pieces</div>
                      </div>
                   </div>
 
-                  {/* Main Interaction Area */}
-                  <div className={`flex flex-col w-full flex-1 relative ${isFullscreen ? 'h-full' : 'bg-[#0a0a0a] min-h-[650px]'}`}>
-                     
-                     {/* The Cover Flow Track */}
-                     <div className="flex-1 relative flex items-center justify-center overflow-hidden w-full h-full bg-[#050505]">
-                        <div className="absolute inset-0 flex items-center justify-center opacity-[0.02] pointer-events-none">
-                           <PoshakhLogo size={800} />
-                        </div>
-
-                        {/* Pagination Counter Sidebar */}
-                        {items.length > 1 && (
-                           <div className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-6 pointer-events-none">
-                              <div className="bg-[#111]/80 backdrop-blur-xl border border-gray-700 rounded-full px-2 py-4 md:px-3 md:py-6 flex flex-col items-center justify-center gap-4 shadow-[0_0_30px_rgba(0,0,0,0.8)]">
-                                 <button onClick={(e) => {
-                                   e.stopPropagation();
-                                   setActiveStackIndex(p => ({...p, [tailorName]: (currentIndex - 1 + items.length) % items.length}));
-                                 }} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center pointer-events-auto hover:bg-gray-800 transition-colors"><ChevronLeft size={20}/></button>
-                                 
-                                 <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gray-800 flex items-center justify-center text-white font-black text-base md:text-lg border border-gray-600">{items.length}</div>
-                                 <div className="w-0.5 h-10 md:h-16 bg-gray-700 rounded-full"></div>
-                                 <div className="text-gray-500 text-[9px] md:text-[10px] font-black uppercase tracking-widest whitespace-nowrap" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Pending In Stack</div>
-                                 
-                                 <button onClick={(e) => {
-                                   e.stopPropagation();
-                                   setActiveStackIndex(p => ({...p, [tailorName]: (currentIndex + 1) % items.length}));
-                                 }} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center pointer-events-auto hover:bg-gray-800 transition-colors"><ChevronRight size={20}/></button>
-                              </div>
-                           </div>
-                        )}
-
-                        <div className={`w-full h-full relative flex items-center perspective-[1200px] preserve-3d transition-transform duration-500 ${hasSelection ? '-translate-y-24 md:-translate-y-28' : ''}`}>
-                           {items.map((st, i) => {
-                              const entryImage = findProductImage(st.product);
-                              const startTime = new Date(st.startedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                              const isSelected = selectedSubTaskIds.has(st.subId);
-                              
-                              const diff = (i - currentIndex + items.length) % items.length;
-                              let position = diff;
-                              if (diff > items.length / 2) position -= items.length;
-
-                              const isCenter = position === 0;
-                              const isVisible = Math.abs(position) <= 2;
-                              
-                              const translateX = position * (isFullscreen ? 45 : 35); 
-                              const translateZ = Math.abs(position) * -200; 
-                              const rotateY = position * -25; 
-                              
-                              const blurAmount = isCenter ? 0 : Math.abs(position) * 4;
-                              const opacity = isCenter ? 1 : (isVisible ? Math.max(1 - (Math.abs(position) * 0.4), 0.3) : 0);
-                              const zIndex = 50 - Math.abs(position);
-
-                              return (
-                                <div 
-                                  key={st.subId}
-                                  onClick={() => {
-                                    if (!isCenter && isMyWork && isVisible) {
-                                      setActiveStackIndex(p => ({...p, [tailorName]: i}));
-                                    } else if (isCenter && isMyWork) {
-                                      toggleSubTaskSelection(st.subId);
-                                    }
-                                  }}
-                                  className={`absolute top-1/2 left-1/2 rounded-[2.5rem] border-[3px] overflow-hidden flex flex-col justify-end backdrop-blur-xl
-                                    ${isMyWork ? (isCenter ? 'cursor-pointer' : 'cursor-pointer hover:scale-[1.02]') : 'opacity-50 grayscale pointer-events-none'} 
-                                    ${isSelected && isCenter ? 'border-[#cdfc4c] shadow-[0_0_50px_rgba(205,252,76,0.3)]' : 'border-gray-800 shadow-[0_30px_60px_rgba(0,0,0,0.8)]'}
-                                  `}
-                                  style={{
-                                     transform: `translate(-50%, -50%) translateX(${translateX}vw) translateZ(${translateZ}px) rotateY(${rotateY}deg)`,
-                                     zIndex,
-                                     opacity,
-                                     filter: `blur(${blurAmount}px)`,
-                                     visibility: opacity === 0 ? 'hidden' : 'visible',
-                                     width: isFullscreen ? 'min(85vw, 600px)' : 'min(90vw, 500px)', 
-                                     height: isFullscreen ? '75vh' : '650px',
-                                     transition: 'transform 0.8s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.8s ease, filter 0.8s ease'
-                                  }}
-                                >
-                                   {entryImage ? (
-                                      <img src={entryImage} className="absolute inset-0 w-full h-full object-cover object-top opacity-90 transition-transform duration-700 group-hover:scale-110" />
-                                   ) : (
-                                      <div className="absolute inset-0 bg-gray-900 flex items-center justify-center"><ImageIcon className="text-gray-800 w-32 h-32 opacity-50" /></div>
-                                   )}
-                                   
-                                   {/* Gradients */}
-                                   <div className={`absolute inset-0 transition-opacity duration-500 ${isSelected && isCenter ? 'bg-gradient-to-t from-[#cdfc4c]/30 via-black/40 to-black/10' : 'bg-gradient-to-t from-black via-black/50 to-black/10'}`}></div>
-
-                                   {/* Top Badges */}
-                                   <div className="absolute top-6 left-6 z-20 flex flex-col gap-3">
-                                       <span className={`px-4 py-2 rounded-xl backdrop-blur-xl text-xs font-black flex items-center gap-1.5 shadow-2xl border ${st.workType === 'Cut' ? 'bg-yellow-500/90 text-black border-yellow-400' : (st.workType === 'Stitch' ? 'bg-blue-500/90 text-white border-blue-400' : 'bg-purple-500/90 text-white border-purple-400')}`}>
-                                         {st.workType === 'Cut' ? '✂️ CUT ONLY' : (st.workType === 'Stitch' ? '🧵 STITCH ONLY' : '✂️+🧵 BOTH')}
-                                       </span>
-                                   </div>
-
-                                   {/* Selection Checkmark */}
-                                   {isMyWork && isCenter && (
-                                     <div className="absolute top-6 right-6 z-20">
-                                        <div className={`w-14 h-14 rounded-full border-4 flex items-center justify-center transition-all duration-300 shadow-2xl backdrop-blur-xl ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/20 bg-black/40 hover:border-white/60 hover:bg-black/60'}`}>
-                                           {isSelected && <CheckCircle size={28} className="text-black" />}
-                                        </div>
-                                     </div>
-                                   )}
-
-                                   {/* Bottom Info Panel */}
-                                   <div className="relative w-full p-6 md:p-8 z-20 flex flex-col justify-end pointer-events-none mt-auto">
-                                      <div className="mb-4 flex items-end justify-between pointer-events-auto">
-                                         {/* Giant Size Pill */}
-                                         <div className={`text-6xl md:text-7xl font-black uppercase tracking-tighter px-6 py-2 rounded-3xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] border-[4px] transition-colors inline-block ${isSelected ? 'bg-[#cdfc4c] text-black border-[#cdfc4c]' : 'bg-black/80 text-[#cdfc4c] border-[#cdfc4c] backdrop-blur-xl'}`}>
-                                            SIZE {st.size}
-                                         </div>
-                                         
-                                         {isMyWork && isCenter && (
-                                            <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-14 h-14 rounded-full bg-black/80 border-2 border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all backdrop-blur-xl shadow-2xl shrink-0 ml-4" title="Drop Item">
-                                               <Trash2 size={20} />
-                                            </button>
-                                         )}
-                                      </div>
-
-                                      <div className="flex flex-col pointer-events-auto max-w-[80%] pr-4">
-                                        <div className="flex items-center gap-2 mb-2 opacity-90 drop-shadow-md">
-                                          <Activity size={14} className="text-purple-300"/>
-                                          <span className="text-[10px] font-bold uppercase tracking-widest text-purple-200">{startTime}</span>
-                                        </div>
-                                        <div className={`font-black text-2xl md:text-4xl leading-tight line-clamp-2 drop-shadow-[0_4px_15px_rgba(0,0,0,0.8)] mb-3 ${isSelected ? 'text-white' : 'text-gray-100'}`}>
-                                           {formatProductName(st.product)}
-                                        </div>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <div className="text-[10px] text-white font-bold bg-purple-900/80 border border-purple-500/50 px-3 py-1.5 rounded-lg uppercase tracking-widest shadow-xl backdrop-blur-md">
-                                            {st.platform === 'Shopify / Website' ? 'Shopify' : (st.platform || 'Shopify')}
-                                          </div>
-                                          {st.orderNumber && (
-                                            <div className="text-[10px] text-white font-bold bg-blue-900/80 border border-blue-500/50 px-3 py-1.5 rounded-lg uppercase tracking-widest shadow-xl backdrop-blur-md">
-                                              Ord: {st.orderNumber}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                   </div>
-                                </div>
-                              )
-                           })}
-                        </div>
+                  <div 
+                    className={`flex-1 relative flex items-center justify-center w-full h-full touch-pan-y select-none transition-transform duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${hasSelection ? 'md:-translate-y-20 -translate-y-12' : ''}`}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={() => handleTouchEnd(tailorName, items.length, currentIndex)}
+                    onWheel={(e) => handleWheel(e, tailorName, items.length, currentIndex)}
+                  >
+                     <div className="absolute inset-0 flex items-center justify-center opacity-[0.015] pointer-events-none">
+                        <PoshakhLogo size={800} />
                      </div>
 
-                     {/* Bottom Submission Panel Sliding Over */}
-                     {isMyWork && (
-                        <div className={`absolute bottom-0 left-0 w-full z-50 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${hasSelection ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'}`}>
-                           <div className="bg-[#0a0a0a]/95 backdrop-blur-2xl border-t border-gray-800 p-6 pb-safe md:p-8 rounded-t-[2.5rem] shadow-[0_-30px_60px_rgba(0,0,0,0.8)] mx-auto max-w-6xl w-full">
+                     {items.length > 1 && (
+                        <div className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-4 pointer-events-none">
+                           <div className="bg-[#111]/80 backdrop-blur-xl border border-gray-700 rounded-[3rem] p-3 flex flex-col items-center justify-center gap-6 shadow-[0_0_40px_rgba(0,0,0,0.8)] pointer-events-auto">
+                              <button onClick={(e) => {
+                                e.stopPropagation();
+                                navigateStack(tailorName, currentIndex - 1, items.length);
+                              }} className="w-12 h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center hover:bg-gray-800 transition-colors"><ChevronLeft size={20} className="rotate-90"/></button>
                               
-                              <div className="flex flex-col lg:flex-row items-center gap-6 lg:gap-8">
-                                 {/* Left: Selection Info */}
-                                 <div className="flex items-center gap-4 shrink-0 w-full lg:w-auto border-b lg:border-b-0 border-gray-800 pb-4 lg:pb-0">
-                                    <div className="w-14 h-14 rounded-full bg-[#cdfc4c]/10 flex items-center justify-center border border-[#cdfc4c]/30 text-[#cdfc4c]">
-                                       <CheckCircle size={28}/>
-                                    </div>
-                                    <div>
-                                       <div className="text-2xl font-black text-white">{selectedSubTasks.length} Selected</div>
-                                       <div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mt-1">Ready for QC</div>
-                                    </div>
-                                 </div>
-
-                                 {/* Middle: Horizontal Photos */}
-                                 <div className="flex-1 w-full flex items-center justify-center lg:justify-start">
-                                    {renderPhotoUploader(uploaderWorkType, 'horizontal')}
-                                 </div>
-
-                                 {/* Right: Submit Action */}
-                                 <div className="shrink-0 w-full lg:w-auto mt-4 lg:mt-0">
-                                    <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className={`w-full lg:w-64 py-5 text-black font-black tracking-wide rounded-2xl disabled:opacity-50 transition-all shadow-xl text-lg flex items-center justify-center gap-3 shrink-0 ${canSubmit ? 'bg-[#cdfc4c] hover:bg-[#b5e638] shadow-[#cdfc4c]/20' : 'bg-gray-700 text-gray-400 cursor-not-allowed'}`}>
-                                       {isUploading ? <><Loader2 className="animate-spin" size={24}/> Submitting...</> : (!canSubmit ? (requiresThree ? 'Add All 3 QC Photos' : 'Add Fabric Proof') : `Submit ${selectedSubTasks.length} Checked`)}
-                                    </button>
-                                 </div>
+                              <div className="w-14 h-14 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-white font-black text-xl shadow-[0_0_15px_rgba(168,85,247,0.3)]">
+                                  {items.length - currentIndex}
                               </div>
+                              <div className="w-0.5 h-20 bg-gray-700 rounded-full"></div>
+                              <div className="text-gray-500 text-[10px] font-black uppercase tracking-widest whitespace-nowrap mb-2" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Pending In Stack</div>
+                              
+                              <button onClick={(e) => {
+                                e.stopPropagation();
+                                navigateStack(tailorName, currentIndex + 1, items.length);
+                              }} className="w-12 h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center hover:bg-gray-800 transition-colors"><ChevronRight size={20} className="rotate-90"/></button>
                            </div>
                         </div>
                      )}
+
+                     <div className="w-full h-full relative flex items-center justify-center perspective-[1800px] preserve-3d">
+                        {items.map((st, i) => {
+                           const entryImage = findProductImage(st.product);
+                           
+                           // SAFE DATE PARSING
+                           const isValidDate = (d) => d instanceof Date && !isNaN(d);
+                           const stDate = st.startedAt ? new Date(st.startedAt) : null;
+                           const startTime = isValidDate(stDate) ? stDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+                           
+                           const isSelected = selectedSubTaskIds.has(st.subId);
+                           
+                           const offset = i - currentIndex;
+                           const sign = Math.sign(offset);
+                           const absOffset = Math.abs(offset);
+
+                           const isCenter = offset === 0;
+                           const isVisible = absOffset <= 2;
+                           
+                           const translateX = `${offset * 115}%`; 
+                           const translateZ = `${-absOffset * 100}px`;
+                           const rotateY = `${-sign * 15}deg`;
+                           const scale = isCenter ? 1 : Math.max(1 - (absOffset * 0.1), 0.8);
+                           
+                           const blurAmount = isCenter ? 0 : absOffset * 4;
+                           const opacity = isCenter ? 1 : (isVisible ? Math.max(1 - (absOffset * 0.4), 0.3) : 0);
+                           const zIndex = 50 - absOffset;
+
+                           return (
+                             <div 
+                               key={st.subId}
+                               onClick={() => {
+                                 if (!isCenter && isMyWork && isVisible) {
+                                   navigateStack(tailorName, i, items.length);
+                                 } else if (isCenter && isMyWork) {
+                                   toggleSubTaskSelection(st.subId);
+                                 }
+                               }}
+                               className={`absolute top-1/2 left-1/2 rounded-[2.5rem] border-[3px] overflow-hidden flex flex-col justify-end backdrop-blur-xl shadow-[0_30px_60px_rgba(0,0,0,0.8)]
+                                 ${isMyWork ? (isCenter ? 'cursor-pointer' : 'cursor-pointer hover:scale-[1.02]') : 'opacity-50 grayscale pointer-events-none'} 
+                                 ${isSelected && isCenter ? 'border-[#cdfc4c] shadow-[0_0_50px_rgba(205,252,76,0.3)] ring-4 ring-[#cdfc4c]/30' : 'border-gray-800'}
+                               `}
+                               style={{
+                                  transform: `translate(-50%, -50%) translateX(${translateX}) translateZ(${translateZ}) rotateY(${rotateY}) scale(${scale})`,
+                                  zIndex, opacity, filter: `blur(${blurAmount}px)`, visibility: opacity === 0 ? 'hidden' : 'visible',
+                                  width: 'min(90vw, 550px)', 
+                                  height: isFullscreen ? 'min(85vh, 750px)' : 'min(70vh, 700px)',
+                                  transition: 'transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s ease, filter 0.6s ease'
+                               }}
+                             >
+                                {entryImage ? (
+                                   <img src={entryImage} className="absolute inset-0 w-full h-full object-cover object-top opacity-90 transition-transform duration-700 group-hover:scale-105 pointer-events-none" />
+                                ) : (
+                                   <div className="absolute inset-0 bg-gray-900 flex items-center justify-center"><ImageIcon className="text-gray-800 w-32 h-32 opacity-50" /></div>
+                                )}
+                                
+                                <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${isSelected && isCenter ? 'bg-gradient-to-t from-[#cdfc4c]/30 via-black/40 to-black/10' : 'bg-gradient-to-t from-black/90 via-black/40 to-black/10'}`}></div>
+
+                                <div className="absolute top-6 left-6 z-20 flex flex-col gap-3">
+                                    <span className={`px-4 py-2 rounded-xl backdrop-blur-xl text-xs font-black flex items-center gap-1.5 shadow-2xl border ${st.workType === 'Cut' ? 'bg-yellow-500 text-black border-yellow-400 shadow-yellow-500/20' : (st.workType === 'Stitch' ? 'bg-blue-500 text-white border-blue-400 shadow-blue-500/20' : 'bg-purple-500 text-white border-purple-400 shadow-purple-500/20')}`}>
+                                      {st.workType === 'Cut' ? '✂️ CUT ONLY' : (st.workType === 'Stitch' ? '🧵 STITCH ONLY' : '✂️+🧵 BOTH')}
+                                    </span>
+                                </div>
+
+                                {isMyWork && isCenter && (
+                                  <div className="absolute top-6 right-6 z-20">
+                                     <div className={`w-14 h-14 rounded-full border-4 flex items-center justify-center transition-all duration-300 shadow-2xl backdrop-blur-xl ${isSelected ? 'border-[#cdfc4c] bg-[#cdfc4c] scale-110' : 'border-white/20 bg-black/40 hover:border-white/60 hover:bg-black/60'}`}>
+                                        {isSelected && <CheckCircle size={28} className="text-black" />}
+                                     </div>
+                                  </div>
+                                )}
+
+                                <div className="relative w-full p-6 md:p-8 z-20 flex flex-col justify-end pointer-events-none mt-auto">
+                                   <div className="mb-4 flex items-end justify-between pointer-events-auto">
+                                      <div className={`text-6xl md:text-7xl font-black uppercase tracking-tighter px-6 py-2 rounded-[2rem] shadow-[0_10px_40px_rgba(0,0,0,0.8)] border-[4px] transition-colors inline-block ${isSelected ? 'bg-[#cdfc4c] text-black border-[#cdfc4c]' : 'bg-black/80 text-[#cdfc4c] border-[#cdfc4c] backdrop-blur-xl'}`}>
+                                         SIZE {st.size}
+                                      </div>
+                                      
+                                      {isMyWork && isCenter && (
+                                         <button onClick={(e) => { e.stopPropagation(); handleDropTask(st.id); }} className="w-14 h-14 rounded-full bg-black/80 border-2 border-gray-700 text-gray-400 hover:bg-rose-500 hover:border-rose-500 hover:text-white flex items-center justify-center transition-all backdrop-blur-xl shadow-2xl shrink-0 ml-4" title="Drop Item">
+                                            <Trash2 size={20} />
+                                         </button>
+                                      )}
+                                   </div>
+
+                                   <div className="flex flex-col pointer-events-auto max-w-[80%] pr-4">
+                                     <div className="flex items-center gap-2 mb-2 opacity-90 drop-shadow-md">
+                                       <Activity size={14} className="text-purple-300"/>
+                                       <span className="text-[10px] font-bold uppercase tracking-widest text-purple-200">{startTime}</span>
+                                     </div>
+                                     <div className={`font-black text-3xl md:text-4xl leading-tight line-clamp-2 drop-shadow-[0_4px_15px_rgba(0,0,0,0.8)] mb-3 ${isSelected ? 'text-white' : 'text-gray-100'}`}>
+                                        {formatProductName(st.product)}
+                                     </div>
+                                     <div className="flex flex-wrap items-center gap-2">
+                                       <div className="text-[10px] text-white font-bold bg-purple-900/80 border border-purple-500/50 px-3 py-1.5 rounded-lg uppercase tracking-widest shadow-xl backdrop-blur-md">
+                                         {st.platform === 'Shopify / Website' ? 'Shopify' : (st.platform || 'Shopify')}
+                                       </div>
+                                       {st.orderNumber && (
+                                         <div className="text-[10px] text-white font-bold bg-blue-900/80 border border-blue-500/50 px-3 py-1.5 rounded-lg uppercase tracking-widest shadow-xl backdrop-blur-md">
+                                           Ord: {st.orderNumber}
+                                         </div>
+                                       )}
+                                     </div>
+                                   </div>
+                                </div>
+                             </div>
+                           )
+                        })}
+                     </div>
                   </div>
+
+                  {isMyWork && (
+                     <div className={`fixed bottom-0 left-0 w-full z-50 transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] transform ${hasSelection ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'}`}>
+                        <div className="bg-[#0a0a0a]/95 backdrop-blur-3xl border-t border-gray-800 p-6 pb-safe md:p-8 rounded-t-[2.5rem] shadow-[0_-30px_60px_rgba(0,0,0,0.9)] mx-auto max-w-6xl w-full">
+                           
+                           <div className="flex flex-col lg:flex-row items-center gap-6 lg:gap-8">
+                              <div className="flex items-center gap-4 shrink-0 w-full lg:w-auto border-b lg:border-b-0 border-gray-800 pb-4 lg:pb-0">
+                                 <div className="w-14 h-14 rounded-full bg-[#cdfc4c]/10 flex items-center justify-center border border-[#cdfc4c]/30 text-[#cdfc4c]">
+                                    <CheckCircle size={28}/>
+                                 </div>
+                                 <div>
+                                    <div className="text-2xl font-black text-white">{selectedSubTasks.length} Selected</div>
+                                    <div className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mt-1">Ready for QC</div>
+                                 </div>
+                              </div>
+
+                              <div className="flex-1 w-full flex items-center justify-center lg:justify-start">
+                                 {renderPhotoUploader(uploaderWorkType, 'horizontal')}
+                              </div>
+
+                              <div className="shrink-0 w-full lg:w-auto mt-4 lg:mt-0">
+                                 <button disabled={isUploading || !canSubmit} onClick={(e) => handleCompleteLiveSelection(e, tailorName, items)} className={`w-full lg:w-64 py-5 text-black font-black tracking-wide rounded-2xl disabled:opacity-50 transition-all shadow-xl text-lg flex items-center justify-center gap-3 shrink-0 ${canSubmit ? 'bg-[#cdfc4c] hover:bg-[#b5e638] shadow-[#cdfc4c]/20' : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'}`}>
+                                    {isUploading ? <><Loader2 className="animate-spin" size={24}/> Submitting...</> : (!canSubmit ? (requiresThree ? 'Add All 3 QC Photos' : 'Add Fabric Proof') : `Submit ${selectedSubTasks.length} Checked`)}
+                                 </button>
+                              </div>
+                           </div>
+                        </div>
+                     </div>
+                  )}
                 </div>
               )
             })}
@@ -1538,10 +1575,9 @@ export default function App() {
     };
 
     return (
-      <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20 relative">
+      <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20 relative px-4 md:px-8">
         
         <div className="sticky top-0 z-30 bg-[#0a0a0a]/95 backdrop-blur-xl pt-2 pb-4 border-b border-gray-800 -mx-4 px-4 md:-mx-8 md:px-8">
-           
            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
               <div>
                  <h2 className="text-3xl font-black tracking-tight text-white flex items-center gap-2"><ListTodo size={28} className="text-rose-500"/> Priority Tasks</h2>
@@ -1662,25 +1698,15 @@ export default function App() {
 
              return (
                <div key={plat} className={`relative flex flex-col w-full border ${brand.border} rounded-3xl bg-[#0a0a0a] overflow-hidden shadow-2xl transition-all duration-300`}>
-                 
-                 <div 
-                   onClick={() => togglePlatform(plat)}
-                   className={`w-full p-5 border-b ${isPlatformExpanded ? brand.border : 'border-transparent'} bg-gradient-to-r ${brand.gradient} flex items-center justify-between relative z-10 cursor-pointer hover:bg-white/5 transition-colors`}
-                 >
+                 <div onClick={() => togglePlatform(plat)} className={`w-full p-5 border-b ${isPlatformExpanded ? brand.border : 'border-transparent'} bg-gradient-to-r ${brand.gradient} flex items-center justify-between relative z-10 cursor-pointer hover:bg-white/5 transition-colors`}>
                     <div className="flex items-center gap-4">
-                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center bg-black border ${brand.border} shadow-2xl shrink-0`}>
-                          <ShoppingBag size={24} className={brand.color}/>
-                       </div>
+                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center bg-black border ${brand.border} shadow-2xl shrink-0`}><ShoppingBag size={24} className={brand.color}/></div>
                        <div>
                           <h2 className={`text-2xl md:text-3xl font-black tracking-tight ${brand.color}`}>{plat}</h2>
-                          <div className="text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">
-                             {groups.length} Styles • {taskCount} Pending Pieces
-                          </div>
+                          <div className="text-[10px] md:text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">{groups.length} Styles • {taskCount} Pending Pieces</div>
                        </div>
                     </div>
-                    <div className={`w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-white transition-transform duration-300 ${isPlatformExpanded ? 'rotate-180' : ''}`}>
-                       <ChevronDown size={20} />
-                    </div>
+                    <div className={`w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center text-white transition-transform duration-300 ${isPlatformExpanded ? 'rotate-180' : ''}`}><ChevronDown size={20} /></div>
                  </div>
 
                  {isPlatformExpanded && (
@@ -1703,27 +1729,18 @@ export default function App() {
                               <div key={group.id} className={`shrink-0 snap-start w-[280px] sm:w-[320px] bg-[#111] border rounded-3xl overflow-hidden flex flex-col shadow-2xl relative transition-all duration-300 ${isExpanded ? `ring-2 ${brand.ring} scale-[1.02] z-20` : 'hover:border-gray-600 cursor-pointer'} ${urgencyClass}`} onClick={() => !isExpanded && setExpandedTaskGroup(group.id)}>
                                  
                                  <div className="w-full aspect-[4/5] relative bg-black shrink-0 border-b border-gray-800">
-                                    {productImage ? (
-                                       <img src={productImage} className="absolute inset-0 w-full h-full object-cover opacity-80" />
-                                    ) : (
-                                       <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>
-                                    )}
+                                    {productImage ? <img src={productImage} className="absolute inset-0 w-full h-full object-cover opacity-80 object-top" /> : <div className="absolute inset-0 flex items-center justify-center"><ImageIcon className="text-gray-800 w-16 h-16" /></div>}
                                     
                                     <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
                                        <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-xs font-black flex items-center gap-1.5 ${pBadge}`}>
-                                         {group.highestPriority === '1' && <Flame size={12}/>}
-                                         P{group.highestPriority} Priority
+                                         {group.highestPriority === '1' && <Flame size={12}/>} P{group.highestPriority} Priority
                                        </span>
                                        <span className={`px-2 py-1 rounded-lg border backdrop-blur-md text-xs font-black flex items-center gap-1.5 shadow-lg ${group.workType === 'Cut' ? 'bg-yellow-500 text-black border-yellow-400' : (group.workType === 'Stitch' ? 'bg-blue-500 text-white border-blue-400' : 'bg-purple-500 text-white border-purple-400')}`}>
                                          {group.workType === 'Cut' ? '✂️ CUT ONLY' : (group.workType === 'Stitch' ? '🧵 STITCH ONLY' : '✂️+🧵 BOTH')}
                                        </span>
                                     </div>
 
-                                    {group.status === 'rejected' && (
-                                       <div className="absolute top-4 right-4 z-10">
-                                          <span className="bg-rose-500 text-white border border-rose-400 text-xs font-black px-2 py-1 rounded-lg shadow-lg">REJECTED FIX</span>
-                                       </div>
-                                    )}
+                                    {group.status === 'rejected' && <div className="absolute top-4 right-4 z-10"><span className="bg-rose-500 text-white border border-rose-400 text-xs font-black px-2 py-1 rounded-lg shadow-lg">REJECTED FIX</span></div>}
 
                                     <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black via-black/80 to-transparent">
                                        <h3 className="text-xl font-black text-white leading-tight line-clamp-2 drop-shadow-md">{group.product}</h3>
@@ -1736,9 +1753,7 @@ export default function App() {
                                        <div className="flex items-center justify-between mb-4">
                                           <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Select pieces to start:</div>
                                           <div className="flex gap-2">
-                                             {role === 'admin' && (
-                                                <button onClick={(e) => { e.stopPropagation(); handleClearOutfit(group); }} className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-950/30 px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-900/50 flex items-center gap-1"><Trash2 size={12}/> Clear All</button>
-                                             )}
+                                             {role === 'admin' && <button onClick={(e) => { e.stopPropagation(); handleClearOutfit(group); }} className="text-[10px] text-rose-500 font-black uppercase tracking-widest bg-rose-950/30 px-3 py-1.5 rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-900/50 flex items-center gap-1"><Trash2 size={12}/> Clear All</button>}
                                              <button onClick={(e) => { e.stopPropagation(); setExpandedTaskGroup(null); }} className="text-[10px] text-gray-400 hover:text-white font-black uppercase tracking-widest bg-gray-800 px-3 py-1.5 rounded-lg transition-colors">Close</button>
                                           </div>
                                        </div>
@@ -1762,9 +1777,7 @@ export default function App() {
                                                         <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(null); }} className="px-2 py-1 bg-gray-700 text-white rounded text-[10px] font-black uppercase">No</button>
                                                       </div>
                                                     ) : (
-                                                      <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(st.subId); }} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece">
-                                                        <Trash2 size={16} />
-                                                      </button>
+                                                      <button onClick={(e) => { e.stopPropagation(); setCancellingSubId(st.subId); }} className="p-1.5 text-gray-600 hover:text-rose-500 transition-colors bg-black border border-gray-800 rounded-lg hover:bg-rose-900/30" title="Remove this piece"><Trash2 size={16} /></button>
                                                     )
                                                   )}
                                                 </div>
@@ -1772,40 +1785,19 @@ export default function App() {
                                               
                                               <div className="flex items-center gap-2 flex-wrap" onClick={(e) => e.stopPropagation()}>
                                                 <select value={st.workType || 'Both'} onChange={(e) => updateTaskField(st.id, 'workType', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500">
-                                                  <option value="Both">Both</option>
-                                                  <option value="Cut">Cut</option>
-                                                  <option value="Stitch">Stitch</option>
+                                                  <option value="Both">Both</option><option value="Cut">Cut</option><option value="Stitch">Stitch</option>
                                                 </select>
                                                 <select value={st.assignee || 'Any'} onChange={(e) => updateTaskField(st.id, 'assignee', e.target.value)} className="bg-purple-950/20 border border-purple-900/50 text-[10px] text-purple-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-purple-500 transition-colors">
-                                                  <option value="Any">Any Tailor</option>
-                                                  {tailors.map(t => <option key={t} value={t}>{t}</option>)}
+                                                  <option value="Any">Any Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
                                                 </select>
-                                                <input 
-                                                  type="text" 
-                                                  placeholder="Ord #" 
-                                                  defaultValue={st.orderNumber || ''} 
-                                                  onBlur={(e) => {
-                                                    if (e.target.value !== (st.orderNumber || '')) {
-                                                       updateTaskField(st.id, 'orderNumber', e.target.value);
-                                                    }
-                                                  }}
-                                                  onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                                                  className="bg-black border border-gray-700 text-[10px] text-blue-300 font-bold py-1 px-2 rounded outline-none w-14 sm:w-16 hover:border-blue-500/50 transition-colors"
-                                                  title="Add/Edit Order Number"
-                                                />
-                                                <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500">
-                                                  <option value="Shopify / Website">Shopify</option>
-                                                  <option value="Amazon">Amazon</option>
-                                                  <option value="Myntra">Myntra</option>
+                                                <input type="text" placeholder="Ord #" defaultValue={st.orderNumber || ''} onBlur={(e) => { if (e.target.value !== (st.orderNumber || '')) updateTaskField(st.id, 'orderNumber', e.target.value); }} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} className="bg-black border border-gray-700 text-[10px] text-blue-300 font-bold py-1 px-2 rounded outline-none w-14 sm:w-16 hover:border-blue-500/50 transition-colors"/>
+                                                <select value={st.platform || 'Shopify / Website'} onChange={(e) => updateTaskField(st.id, 'platform', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden xl:block">
+                                                  <option value="Shopify / Website">Shopify</option><option value="Amazon">Amazon</option><option value="Myntra">Myntra</option>
                                                 </select>
-                                                <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500">
-                                                  <option value="1">P1</option>
-                                                  <option value="2">P2</option>
-                                                  <option value="3">P3</option>
-                                                  <option value="4">P4</option>
+                                                <select value={getNormalizedPriority(st.priority)} onChange={(e) => updateTaskField(st.id, 'priority', e.target.value)} className="bg-black border border-gray-700 text-[10px] text-gray-400 font-bold py-1 px-2 rounded outline-none appearance-none cursor-pointer hover:border-gray-500 hidden sm:block">
+                                                  <option value="1">P1</option><option value="2">P2</option><option value="3">P3</option><option value="4">P4</option>
                                                 </select>
                                               </div>
-
                                             </div>
                                           ))}
                                        </div>
@@ -1842,7 +1834,7 @@ export default function App() {
   };
 
   const renderAddBatch = () => (
-    <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 md:px-0">
       <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Log' : 'Log Stitched Batch'}</h2><p className="text-gray-400 mt-2">Record daily production turnaround.</p></div>
       <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
         <form onSubmit={handleProdSubmit} className="space-y-6">
@@ -1856,9 +1848,7 @@ export default function App() {
             <div>
               <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Platform</label>
               <select value={prodForm.platform} onChange={(e) => setProdForm({...prodForm, platform: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none appearance-none">
-                <option value="Shopify / Website">Shopify / Website</option>
-                <option value="Amazon">Amazon</option>
-                <option value="Myntra">Myntra</option>
+                <option value="Shopify / Website">Shopify / Website</option><option value="Amazon">Amazon</option><option value="Myntra">Myntra</option>
               </select>
             </div>
             <div>
@@ -1873,14 +1863,7 @@ export default function App() {
           
           <div className="pt-4 border-t border-gray-800 bg-purple-950/10 p-4 rounded-xl mb-4 border border-purple-900/30">
               <label className="block text-[10px] uppercase tracking-widest font-bold text-purple-400 mb-2">Work Performed</label>
-              <select 
-                  value={prodForm.workType} 
-                  onChange={(e) => {
-                      const newWorkType = e.target.value;
-                      setProdForm({...prodForm, workType: newWorkType, pieceRate: newWorkType === 'Both' ? 250 : 120});
-                  }} 
-                  className="w-full px-4 py-3 bg-black border border-purple-900/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-white font-bold"
-              >
+              <select value={prodForm.workType} onChange={(e) => { const newWorkType = e.target.value; setProdForm({...prodForm, workType: newWorkType, pieceRate: newWorkType === 'Both' ? 250 : 120}); }} className="w-full px-4 py-3 bg-black border border-purple-900/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-white font-bold">
                   <option value="Both">✂️+🧵 Cutting & Stitching (₹250 base)</option>
                   <option value="Cut">✂️ Cutting Only (₹120 base)</option>
                   <option value="Stitch">🧵 Stitching Only (₹120 base)</option>
@@ -1899,7 +1882,7 @@ export default function App() {
               </div>
 
               {isProductDropdownOpen && (
-                <><div className="fixed inset-0 z-40" onClick={() => setIsProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-2 bg-[#111] border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden"><div className="p-3 border-b border-gray-800 bg-[#0a0a0a] relative"><Search size={16} className="absolute left-6 top-6 text-gray-500" /><input autoFocus type="text" placeholder="Search products..." value={productSearch} onChange={(e) => setProductSearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-black border border-gray-800 rounded-lg text-sm text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"/></div><div className="max-h-72 overflow-y-auto custom-scrollbar flex-1">{products.filter(p => formatProductName(p.name).toLowerCase().includes(productSearch.toLowerCase())).map((p, i) => (<div key={i} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800 cursor-pointer transition-colors border-b border-gray-800/50 last:border-0" onClick={() => { setProdForm({...prodForm, product: formatProductName(p.name)}); setIsProductDropdownOpen(false); setProductSearch(''); }}>{p.image ? <img src={p.image} alt={p.name} className="w-10 h-10 rounded-md object-cover border border-gray-800 bg-black shrink-0" /> : <div className="w-10 h-10 rounded-md bg-black border border-gray-800 flex items-center justify-center shrink-0"><ImageIcon size={16} className="text-gray-600" /></div>}<span className="text-sm font-medium text-gray-200 hover:text-white">{formatProductName(p.name)}</span></div>))}</div></div></>
+                <><div className="fixed inset-0 z-40" onClick={() => setIsProductDropdownOpen(false)} /><div className="absolute z-50 w-full mt-2 bg-[#111] border border-gray-700 rounded-xl shadow-2xl flex flex-col overflow-hidden"><div className="p-3 border-b border-gray-800 bg-[#0a0a0a] relative"><Search size={16} className="absolute left-6 top-6 text-gray-500" /><input autoFocus type="text" placeholder="Search products..." value={productSearch} onChange={(e) => setProductSearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-black border border-gray-800 rounded-lg text-sm text-white focus:ring-2 focus:ring-[#cdfc4c] outline-none"/></div><div className="max-h-72 overflow-y-auto custom-scrollbar flex-1">{products.filter(p => formatProductName(p.name).toLowerCase().includes(productSearch.toLowerCase())).map((p, i) => (<div key={i} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800 cursor-pointer transition-colors border-b border-gray-800/50 last:border-0" onClick={() => { setProdForm({...prodForm, product: formatProductName(p.name)}); setIsProductDropdownOpen(false); setProductSearch(''); }}>{p.image ? <img src={p.image} alt={p.name} className="w-10 h-10 rounded-md object-cover object-top border border-gray-800 bg-black shrink-0" /> : <div className="w-10 h-10 rounded-md bg-black border border-gray-800 flex items-center justify-center shrink-0"><ImageIcon size={16} className="text-gray-600" /></div>}<span className="text-sm font-medium text-gray-200 hover:text-white">{formatProductName(p.name)}</span></div>))}</div></div></>
               )}
             </div>
           </div>
@@ -1937,266 +1920,8 @@ export default function App() {
     </div>
   );
 
-  const renderStats = () => {
-    const now = new Date();
-    let startDate = new Date();
-    if (statsTimeFilter === '7days') startDate.setDate(now.getDate() - 7);
-    else if (statsTimeFilter === '30days') startDate.setDate(now.getDate() - 30);
-    else if (statsTimeFilter === 'thisMonth') startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-    else if (statsTimeFilter === 'lastMonth') {
-      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      now.setDate(0); 
-    } else startDate = new Date(0); 
-
-    const statEntries = entries.filter(e => new Date(e.date) >= startDate && new Date(e.date) <= now);
-    const prodEntries = statEntries.filter(e => e.type === 'production');
-
-    const totalPieces = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.totalPieces) : 0), 0);
-    const totalValue = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.amount) : 0), 0);
-    
-    const rejectedPieces = prodEntries.filter(e => e.qcStatus === 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
-    const totalAttemptedPieces = totalPieces + rejectedPieces;
-    const qcRejectionRate = totalAttemptedPieces > 0 ? ((rejectedPieces / totalAttemptedPieces) * 100).toFixed(1) : 0;
-
-    const tailorStats = tailors.map(t => {
-      const tEntries = prodEntries.filter(e => e.tailor === t && e.qcStatus !== 'rejected');
-      const pieces = tEntries.reduce((sum, e) => sum + Number(e.totalPieces), 0);
-      const value = tEntries.reduce((sum, e) => sum + Number(e.amount), 0);
-      return { name: t, pieces, value };
-    }).sort((a, b) => b.pieces - a.pieces);
-    const topTailorPieces = tailorStats[0]?.pieces || 1; 
-
-    const platformStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
-      const plat = e.platform || 'Shopify / Website';
-      if (!acc[plat]) acc[plat] = { pieces: 0, value: 0 };
-      acc[plat].pieces += Number(e.totalPieces);
-      acc[plat].value += Number(e.amount);
-      return acc;
-    }, {});
-    const sortedPlatforms = Object.entries(platformStats).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.pieces - a.pieces);
-    const topPlatformPieces = sortedPlatforms[0]?.pieces || 1;
-
-    const productStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
-      const prod = formatProductName(e.product);
-      if (!acc[prod]) acc[prod] = 0;
-      acc[prod] += Number(e.totalPieces);
-      return acc;
-    }, {});
-    const top5Products = Object.entries(productStats)
-      .map(([name, pieces]) => ({ name, pieces }))
-      .sort((a, b) => b.pieces - a.pieces)
-      .slice(0, 5);
-    const maxProductPieces = top5Products[0]?.pieces || 1;
-
-    return (
-      <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-          <div>
-             <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-2"><BarChart3 className="text-[#cdfc4c]"/> Factory Analytics</h2>
-             <p className="text-gray-400 text-sm mt-1">Production metrics and team performance.</p>
-          </div>
-          <select value={statsTimeFilter} onChange={(e) => setStatsTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none cursor-pointer">
-            <option value="7days">Last 7 Days</option>
-            <option value="30days">Last 30 Days</option>
-            <option value="thisMonth">This Month</option>
-            <option value="lastMonth">Last Month</option>
-            <option value="all">All Time</option>
-          </select>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-[#111] border border-gray-800 p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden">
-             <div className="absolute top-0 right-0 w-32 h-32 bg-[#cdfc4c]/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
-             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Total Factory Output</div>
-             <div>
-                <div className="text-5xl font-black text-white tracking-tighter">{totalPieces.toLocaleString()}</div>
-                <div className="text-[#cdfc4c] font-bold text-sm mt-1 flex items-center gap-1"><TrendingUp size={14}/> Approved Pieces</div>
-             </div>
-          </div>
-          <div className="bg-[#111] border border-gray-800 p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden">
-             <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
-             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Production Value</div>
-             <div>
-                <div className="text-5xl font-black text-white tracking-tighter">₹{totalValue.toLocaleString()}</div>
-                <div className="text-purple-400 font-bold text-sm mt-1">Labor Cost Generated</div>
-             </div>
-          </div>
-          <div className={`border p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden ${qcRejectionRate > 5 ? 'bg-rose-950/20 border-rose-900/50' : 'bg-[#111] border-gray-800'}`}>
-             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Quality Control</div>
-             <div>
-                <div className={`text-5xl font-black tracking-tighter ${qcRejectionRate > 5 ? 'text-rose-500' : 'text-white'}`}>{qcRejectionRate}%</div>
-                <div className={`font-bold text-sm mt-1 flex items-center gap-1 ${qcRejectionRate > 5 ? 'text-rose-400' : 'text-gray-500'}`}>
-                   {qcRejectionRate > 5 ? <AlertTriangle size={14}/> : <CheckCircle size={14}/>} Rejection Rate
-                </div>
-             </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-          <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
-             <h3 className="text-white font-black text-xl mb-6">Top 5 Trending Styles</h3>
-             <div className="space-y-5">
-                {top5Products.length === 0 ? <p className="text-gray-600 text-sm italic">No production data in this period.</p> : top5Products.map((p, i) => {
-                   const img = findProductImage(p.name);
-                   const widthPct = Math.max((p.pieces / maxProductPieces) * 100, 5);
-                   return (
-                     <div key={i} className="flex flex-col gap-2 group">
-                        <div className="flex items-center gap-4">
-                           <div className="w-6 text-gray-600 font-black text-sm">{i + 1}</div>
-                           {img ? <img src={img} className="w-10 h-10 rounded-xl object-cover bg-black border border-gray-700 shrink-0"/> : <div className="w-10 h-10 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600"/></div>}
-                           <div className="flex-1 min-w-0">
-                              <div className="text-white font-bold text-sm truncate">{p.name}</div>
-                              <div className="text-gray-500 text-xs mt-0.5">{p.pieces} pieces stitched</div>
-                           </div>
-                        </div>
-                        <div className="w-full bg-gray-900 rounded-full h-1.5 ml-10 overflow-hidden max-w-[calc(100%-2.5rem)]">
-                           <div className="bg-[#cdfc4c] h-full rounded-full transition-all duration-1000" style={{ width: `${widthPct}%` }}></div>
-                        </div>
-                     </div>
-                   );
-                })}
-             </div>
-          </div>
-
-          <div className="flex flex-col gap-6">
-             <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
-                <h3 className="text-white font-black text-xl mb-6">Platform Distribution</h3>
-                <div className="space-y-4">
-                   {sortedPlatforms.length === 0 ? <p className="text-gray-600 text-sm italic">No data.</p> : sortedPlatforms.map((plat, i) => {
-                      const widthPct = Math.max((plat.pieces / topPlatformPieces) * 100, 5);
-                      let barColor = 'bg-purple-500';
-                      if(plat.name.toLowerCase().includes('shopify')) barColor = 'bg-emerald-500';
-                      if(plat.name.toLowerCase().includes('amazon')) barColor = 'bg-orange-500';
-                      if(plat.name.toLowerCase().includes('myntra')) barColor = 'bg-rose-500';
-
-                      return (
-                        <div key={i} className="flex flex-col gap-1.5">
-                           <div className="flex justify-between items-end">
-                              <span className="text-gray-300 font-bold text-sm flex items-center gap-2"><ShoppingBag size={14} className={barColor.replace('bg-', 'text-')}/> {plat.name}</span>
-                              <span className="text-white font-black text-sm">{plat.pieces} pcs</span>
-                           </div>
-                           <div className="w-full bg-gray-900 rounded-full h-2.5 overflow-hidden">
-                              <div className={`${barColor} h-full rounded-full transition-all duration-1000`} style={{ width: `${widthPct}%` }}></div>
-                           </div>
-                        </div>
-                      )
-                   })}
-                </div>
-             </div>
-
-             <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex-1">
-                <h3 className="text-white font-black text-xl mb-6">Tailor Leaderboard</h3>
-                <div className="space-y-4">
-                   {tailorStats.length === 0 ? <p className="text-gray-600 text-sm italic">No data.</p> : tailorStats.map((t, i) => {
-                      const widthPct = Math.max((t.pieces / topTailorPieces) * 100, 5);
-                      return (
-                        <div key={i} className="flex flex-col gap-1.5 group">
-                           <div className="flex justify-between items-end">
-                              <span className="text-white font-bold text-sm flex items-center gap-2">
-                                {i === 0 && <span className="text-xl">🏆</span>}
-                                {i === 1 && <span className="text-xl">🥈</span>}
-                                {i === 2 && <span className="text-xl">🥉</span>}
-                                {i > 2 && <span className="w-5 text-center text-gray-600 text-xs">{i+1}</span>}
-                                {t.name}
-                              </span>
-                              <span className="text-sky-400 font-black text-sm">{t.pieces} pcs</span>
-                           </div>
-                           <div className="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden">
-                              <div className="bg-sky-500 h-full rounded-full transition-all duration-1000" style={{ width: `${widthPct}%` }}></div>
-                           </div>
-                        </div>
-                      )
-                   })}
-                </div>
-             </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderAddPay = () => {
-    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
-    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
-    
-    // Auto-calculate lifetime pending for the selected tailor
-    const tailorAllEntries = entries.filter(e => e.tailor === payForm.tailor);
-    const lifetimeEarned = tailorAllEntries.filter(e => e.type === 'production' && e.qcStatus !== 'rejected').reduce((s, e) => s + Number(e.amount), 0);
-    const lifetimePaid = tailorAllEntries.filter(e => e.type === 'payment').reduce((s, e) => s + Number(e.amount), 0);
-    const lifetimePending = lifetimeEarned - lifetimePaid;
-
-    return (
-      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments tied to specific dates.</p></div>
-        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
-          <form onSubmit={handlePaySubmit} className="space-y-6">
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
-                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
-                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
-                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
-              </div>
-            </div>
-
-            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
-               <div className="flex items-center gap-2 mb-4">
-                 <CalendarRange size={18} className="text-sky-400" />
-                 <h3 className="text-sky-400 font-bold text-sm">Select Production Period to Settle</h3>
-               </div>
-               
-               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
-                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
-                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
-               </div>
-
-               {payForm.tailor ? (
-                 <div className="flex flex-col gap-3">
-                   <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
-                      <div>
-                         <div className="text-xs text-gray-400 font-bold mb-1">Earned in this specific timeframe:</div>
-                         <div className="text-2xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
-                         <div className="text-[10px] text-gray-500 font-mono mt-1">({periodPieces} approved pieces)</div>
-                      </div>
-                      <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
-                         Auto-Fill Period: ₹{periodEarned}
-                      </button>
-                   </div>
-                   
-                   <div className="bg-rose-950/20 rounded-xl p-4 border border-rose-900/50 flex flex-col md:flex-row items-center justify-between gap-4">
-                      <div>
-                         <div className="text-[10px] text-rose-400 font-bold uppercase tracking-widest mb-1 flex items-center gap-1.5"><AlertCircle size={12}/> Total Lifetime Debt</div>
-                         <div className="text-xl font-black text-rose-500">₹{lifetimePending.toLocaleString()}</div>
-                         <div className="text-[9px] text-gray-500 mt-1">Includes all past unpaid balances</div>
-                      </div>
-                      <button type="button" onClick={() => setPayForm({...payForm, amount: lifetimePending})} className="w-full md:w-auto px-4 py-2 bg-rose-900/40 hover:bg-rose-500 text-rose-300 hover:text-white text-[10px] font-black tracking-widest uppercase rounded-lg transition-colors border border-rose-500/30">
-                         Clear Lifetime: ₹{lifetimePending}
-                      </button>
-                   </div>
-                 </div>
-               ) : (
-                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to see period earnings</div>
-               )}
-            </div>
-
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
-            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
-            
-            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
-          </form>
-        </div>
-      </div>
-    );
-  };
-
   const renderAdminLedger = () => (
-    <div className="w-full space-y-6 animate-in fade-in duration-500 pb-20">
+    <div className="w-full space-y-6 animate-in fade-in duration-500 pb-20 px-4 md:px-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
            <h2 className="text-3xl font-black text-white tracking-tight">Financial Ledger</h2>
@@ -2409,7 +2134,6 @@ export default function App() {
                 return (
                 <div key={i} className={`bg-[#111] p-6 rounded-3xl border transition-colors shadow-2xl flex flex-col relative overflow-hidden ${isOwedMoney ? 'border-rose-900/50' : 'border-gray-800'}`}>
                    
-                   {/* LIFETIME BALANCE HEADER */}
                    <div className={`p-5 -mx-6 -mt-6 mb-6 flex justify-between items-center ${isOwedMoney ? 'bg-gradient-to-r from-rose-950/40 to-black border-b border-rose-900/50' : 'bg-gray-900/40 border-b border-gray-800'}`}>
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 rounded-full bg-black border-2 border-gray-800 flex items-center justify-center text-gray-400"><User size={20}/></div>
@@ -2425,7 +2149,6 @@ export default function App() {
                       </div>
                    </div>
 
-                   {/* SELECTED PERIOD ACTIVITY */}
                    <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5"><CalendarRange size={12}/> Activity in selected dates</div>
                    
                    <div className="grid grid-cols-2 gap-4 mb-4">
@@ -2455,57 +2178,262 @@ export default function App() {
     </div>
   );
 
-  const renderSetup = () => (
-    <div className="w-full max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-white">App Configuration</h2><p className="text-gray-400 mt-2">Manage tailor team and product catalog.</p></div>
-      <div className="bg-[#111] rounded-3xl p-6 md:p-10 border border-gray-800 shadow-2xl">
-        
-        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 mb-8 flex gap-4 items-start">
-           <AlertCircle className="text-yellow-500 shrink-0 mt-0.5" size={20} />
-           <div className="text-sm text-yellow-200/80">
-              <strong className="text-yellow-500 block mb-1">How to add Images:</strong>
-              Open your Shopify <strong>products_export.csv</strong> file. Copy the <strong>Title</strong> column and the <strong>Image Src</strong> column, paste them side-by-side in a blank Excel sheet, then copy and paste them together into the Product Catalog box below!
-           </div>
+  const renderStats = () => {
+    const now = new Date();
+    let startDate = new Date();
+    if (statsTimeFilter === '7days') startDate.setDate(now.getDate() - 7);
+    else if (statsTimeFilter === '30days') startDate.setDate(now.getDate() - 30);
+    else if (statsTimeFilter === 'thisMonth') startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    else if (statsTimeFilter === 'lastMonth') {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      now.setDate(0); 
+    } else startDate = new Date(0); 
+
+    const statEntries = entries.filter(e => new Date(e.date) >= startDate && new Date(e.date) <= now);
+    const prodEntries = statEntries.filter(e => e.type === 'production');
+
+    const totalPieces = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.totalPieces) : 0), 0);
+    const totalValue = prodEntries.reduce((sum, e) => sum + (e.qcStatus !== 'rejected' ? Number(e.amount) : 0), 0);
+    
+    const rejectedPieces = prodEntries.filter(e => e.qcStatus === 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
+    const totalAttemptedPieces = totalPieces + rejectedPieces;
+    const qcRejectionRate = totalAttemptedPieces > 0 ? ((rejectedPieces / totalAttemptedPieces) * 100).toFixed(1) : 0;
+
+    const tailorStats = tailors.map(t => {
+      const tEntries = prodEntries.filter(e => e.tailor === t && e.qcStatus !== 'rejected');
+      const pieces = tEntries.reduce((sum, e) => sum + Number(e.totalPieces), 0);
+      const value = tEntries.reduce((sum, e) => sum + Number(e.amount), 0);
+      return { name: t, pieces, value };
+    }).sort((a, b) => b.pieces - a.pieces);
+    const topTailorPieces = tailorStats[0]?.pieces || 1; 
+
+    const platformStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
+      const plat = e.platform || 'Shopify / Website';
+      if (!acc[plat]) acc[plat] = { pieces: 0, value: 0 };
+      acc[plat].pieces += Number(e.totalPieces);
+      acc[plat].value += Number(e.amount);
+      return acc;
+    }, {});
+    const sortedPlatforms = Object.entries(platformStats).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.pieces - a.pieces);
+    const topPlatformPieces = sortedPlatforms[0]?.pieces || 1;
+
+    const productStats = prodEntries.filter(e => e.qcStatus !== 'rejected').reduce((acc, e) => {
+      const prod = formatProductName(e.product);
+      if (!acc[prod]) acc[prod] = 0;
+      acc[prod] += Number(e.totalPieces);
+      return acc;
+    }, {});
+    const top5Products = Object.entries(productStats)
+      .map(([name, pieces]) => ({ name, pieces }))
+      .sort((a, b) => b.pieces - a.pieces)
+      .slice(0, 5);
+    const maxProductPieces = top5Products[0]?.pieces || 1;
+
+    return (
+      <div className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in pb-20 px-4 md:px-8">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+             <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-2"><BarChart3 className="text-[#cdfc4c]"/> Factory Analytics</h2>
+             <p className="text-gray-400 text-sm mt-1">Production metrics and team performance.</p>
+          </div>
+          <select value={statsTimeFilter} onChange={(e) => setStatsTimeFilter(e.target.value)} className="bg-[#111] border border-gray-800 text-sm font-semibold text-white py-2.5 px-4 rounded-xl focus:ring-2 focus:ring-[#cdfc4c] outline-none cursor-pointer">
+            <option value="7days">Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+            <option value="thisMonth">This Month</option>
+            <option value="lastMonth">Last Month</option>
+            <option value="all">All Time</option>
+          </select>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-3 text-center">Tailor Team (One per line)</label><textarea value={setupForm.tailorsText} onChange={(e) => setSetupForm({...setupForm, tailorsText: e.target.value})} className="w-full h-80 p-4 bg-black border border-gray-800 rounded-2xl text-sm font-mono text-gray-300 focus:ring-2 focus:ring-[#cdfc4c] outline-none resize-none" placeholder="Sajid&#10;Imran" /></div>
-          <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-3 text-center">Product Catalog (Name ⇥ Image URL)</label><textarea value={setupForm.productsText} onChange={(e) => setSetupForm({...setupForm, productsText: e.target.value})} className="w-full h-80 p-4 bg-black border border-gray-800 rounded-2xl text-sm font-mono text-gray-300 focus:ring-2 focus:ring-[#cdfc4c] outline-none resize-none whitespace-pre overflow-x-auto" placeholder="Wrap Around Dress&#9;https://poshakh.com/img1.jpg&#10;Kalamkari Top&#9;https://poshakh.com/img2.jpg" /></div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-[#111] border border-gray-800 p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 bg-[#cdfc4c]/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Total Factory Output</div>
+             <div>
+                <div className="text-5xl font-black text-white tracking-tighter">{totalPieces.toLocaleString()}</div>
+                <div className="text-[#cdfc4c] font-bold text-sm mt-1 flex items-center gap-1"><TrendingUp size={14}/> Approved Pieces</div>
+             </div>
+          </div>
+          <div className="bg-[#111] border border-gray-800 p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Production Value</div>
+             <div>
+                <div className="text-5xl font-black text-white tracking-tighter">₹{totalValue.toLocaleString()}</div>
+                <div className="text-purple-400 font-bold text-sm mt-1">Labor Cost Generated</div>
+             </div>
+          </div>
+          <div className={`border p-6 rounded-3xl flex flex-col justify-between relative overflow-hidden ${qcRejectionRate > 5 ? 'bg-rose-950/20 border-rose-900/50' : 'bg-[#111] border-gray-800'}`}>
+             <div className="text-gray-500 font-bold text-xs uppercase tracking-widest mb-4">Quality Control</div>
+             <div>
+                <div className={`text-5xl font-black tracking-tighter ${qcRejectionRate > 5 ? 'text-rose-500' : 'text-white'}`}>{qcRejectionRate}%</div>
+                <div className={`font-bold text-sm mt-1 flex items-center gap-1 ${qcRejectionRate > 5 ? 'text-rose-400' : 'text-gray-500'}`}>
+                   {qcRejectionRate > 5 ? <AlertTriangle size={14}/> : <CheckCircle size={14}/>} Rejection Rate
+                </div>
+             </div>
+          </div>
         </div>
-        <button onClick={saveConfig} className="w-full mt-8 py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black tracking-wide rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#cdfc4c]/10"><RefreshCw size={18} /> Save Configuration</button>
-      </div>
 
-      <div className="text-center mb-8 mt-16 pt-12 border-t border-gray-800/50"><h2 className="text-3xl font-black tracking-tight text-white">Data & Reports</h2><p className="text-gray-400 mt-2">Export your records to CSV for Excel or Accounting.</p></div>
-      <div className="bg-[#111] rounded-3xl p-6 md:p-10 border border-gray-800 shadow-2xl">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <div>
-            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Report Type</label>
-            <select value={reportForm.type} onChange={(e) => setReportForm({...reportForm, type: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none">
-              <option value="ledger">Detailed Ledger (All Transactions)</option>
-              <option value="settlement">Tailor Settlement (Earnings & Payouts)</option>
-              <option value="production">Production by Style (Inventory)</option>
-            </select>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
+             <h3 className="text-white font-black text-xl mb-6">Top 5 Trending Styles</h3>
+             <div className="space-y-5">
+                {top5Products.length === 0 ? <p className="text-gray-600 text-sm italic">No production data in this period.</p> : top5Products.map((p, i) => {
+                   const img = findProductImage(p.name);
+                   const widthPct = Math.max((p.pieces / maxProductPieces) * 100, 5);
+                   return (
+                     <div key={i} className="flex flex-col gap-2 group">
+                        <div className="flex items-center gap-4">
+                           <div className="w-6 text-gray-600 font-black text-sm">{i + 1}</div>
+                           {img ? <img src={img} className="w-10 h-10 rounded-xl object-cover bg-black border border-gray-700 shrink-0"/> : <div className="w-10 h-10 rounded-xl bg-black border border-gray-700 flex items-center justify-center shrink-0"><Shirt size={16} className="text-gray-600"/></div>}
+                           <div className="flex-1 min-w-0">
+                              <div className="text-white font-bold text-sm truncate">{p.name}</div>
+                              <div className="text-gray-500 text-xs mt-0.5">{p.pieces} pieces stitched</div>
+                           </div>
+                        </div>
+                        <div className="w-full bg-gray-900 rounded-full h-1.5 ml-10 overflow-hidden max-w-[calc(100%-2.5rem)]">
+                           <div className="bg-[#cdfc4c] h-full rounded-full transition-all duration-1000" style={{ width: `${widthPct}%` }}></div>
+                        </div>
+                     </div>
+                   );
+                })}
+             </div>
           </div>
-          <div>
-            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Filter by Tailor</label>
-            <select value={reportForm.tailor} onChange={(e) => setReportForm({...reportForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none">
-              <option value="All">All Tailors</option>
-              {tailors.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Start Date</label>
-            <input type="date" value={reportForm.startDate} onChange={(e) => setReportForm({...reportForm, startDate: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
-          </div>
-          <div>
-            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">End Date</label>
-            <input type="date" value={reportForm.endDate} onChange={(e) => setReportForm({...reportForm, endDate: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+
+          <div className="flex flex-col gap-6">
+             <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8">
+                <h3 className="text-white font-black text-xl mb-6">Platform Distribution</h3>
+                <div className="space-y-4">
+                   {sortedPlatforms.length === 0 ? <p className="text-gray-600 text-sm italic">No data.</p> : sortedPlatforms.map((plat, i) => {
+                      const widthPct = Math.max((plat.pieces / topPlatformPieces) * 100, 5);
+                      let barColor = 'bg-purple-500';
+                      if(plat.name.toLowerCase().includes('shopify')) barColor = 'bg-emerald-500';
+                      if(plat.name.toLowerCase().includes('amazon')) barColor = 'bg-orange-500';
+                      if(plat.name.toLowerCase().includes('myntra')) barColor = 'bg-rose-500';
+
+                      return (
+                        <div key={i} className="flex flex-col gap-1.5">
+                           <div className="flex justify-between items-end">
+                              <span className="text-gray-300 font-bold text-sm flex items-center gap-2"><ShoppingBag size={14} className={barColor.replace('bg-', 'text-')}/> {plat.name}</span>
+                              <span className="text-white font-black text-sm">{plat.pieces} pcs</span>
+                           </div>
+                           <div className="w-full bg-gray-900 rounded-full h-2.5 overflow-hidden">
+                              <div className={`${barColor} h-full rounded-full transition-all duration-1000`} style={{ width: `${widthPct}%` }}></div>
+                           </div>
+                        </div>
+                      )
+                   })}
+                </div>
+             </div>
+
+             <div className="bg-[#111] border border-gray-800 rounded-3xl p-6 md:p-8 flex-1">
+                <h3 className="text-white font-black text-xl mb-6">Tailor Leaderboard</h3>
+                <div className="space-y-4">
+                   {tailorStats.length === 0 ? <p className="text-gray-600 text-sm italic">No data.</p> : tailorStats.map((t, i) => {
+                      const widthPct = Math.max((t.pieces / topTailorPieces) * 100, 5);
+                      return (
+                        <div key={i} className="flex flex-col gap-1.5 group">
+                           <div className="flex justify-between items-end">
+                              <span className="text-white font-bold text-sm flex items-center gap-2">
+                                {i === 0 && <span className="text-xl">🏆</span>}
+                                {i === 1 && <span className="text-xl">🥈</span>}
+                                {i === 2 && <span className="text-xl">🥉</span>}
+                                {i > 2 && <span className="w-5 text-center text-gray-600 text-xs">{i+1}</span>}
+                                {t.name}
+                              </span>
+                              <span className="text-sky-400 font-black text-sm">{t.pieces} pcs</span>
+                           </div>
+                           <div className="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-sky-500 h-full rounded-full transition-all duration-1000" style={{ width: `${widthPct}%` }}></div>
+                           </div>
+                        </div>
+                      )
+                   })}
+                </div>
+             </div>
           </div>
         </div>
-        <button onClick={handleDownloadReport} className="w-full py-4 bg-white hover:bg-gray-200 text-black font-black tracking-wide rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg"><Download size={18} /> Generate & Download CSV</button>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const renderAddPay = () => {
+    const periodEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
+    const periodPieces = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.date >= payForm.periodStart && e.date <= payForm.periodEnd && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.totalPieces), 0);
+    
+    // Quick Lifetime Check for Auto-Fill
+    const lifetimeEarned = entries.filter(e => e.type === 'production' && e.tailor === payForm.tailor && e.qcStatus !== 'rejected').reduce((sum, e) => sum + Number(e.amount), 0);
+    const lifetimePaid = entries.filter(e => e.type === 'payment' && e.tailor === payForm.tailor).reduce((sum, e) => sum + Number(e.amount), 0);
+    const lifetimePending = lifetimeEarned - lifetimePaid;
+
+    return (
+      <div className="w-full max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 md:px-0">
+        <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Payout' : 'Settle Payouts'}</h2><p className="text-gray-400 mt-2">Log cash payments to specific tailors.</p></div>
+        <div className="bg-[#111] rounded-3xl p-6 md:p-8 border border-gray-800 shadow-2xl">
+          <form onSubmit={handlePaySubmit} className="space-y-6">
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Tailor to Pay</label>
+                <select value={payForm.tailor} onChange={(e) => setPayForm({...payForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none appearance-none text-white font-bold">
+                  <option value="">Select Tailor</option>{tailors.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Payment Date</label>
+                <input type="date" value={payForm.date} onChange={(e) => setPayForm({...payForm, date: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/>
+              </div>
+            </div>
+
+            <div className="bg-sky-950/20 border border-sky-900/50 rounded-2xl p-5">
+               <div className="flex items-center justify-between mb-4">
+                 <div className="flex items-center gap-2">
+                   <CalendarRange size={18} className="text-sky-400" />
+                   <h3 className="text-sky-400 font-bold text-sm">Review Production Earnings</h3>
+                 </div>
+               </div>
+               
+               <div className="flex flex-col sm:flex-row items-center gap-3 mb-5">
+                  <input type="date" value={payForm.periodStart} onChange={(e) => setPayForm({...payForm, periodStart: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+                  <span className="text-gray-500 text-xs font-bold uppercase">to</span>
+                  <input type="date" value={payForm.periodEnd} onChange={(e) => setPayForm({...payForm, periodEnd: e.target.value})} className="w-full bg-black border border-gray-800 text-sm font-semibold text-white py-2 px-4 rounded-xl focus:ring-2 focus:ring-sky-400 outline-none"/>
+               </div>
+
+               {payForm.tailor ? (
+                 <div className="flex flex-col gap-3">
+                     <div className="bg-black/50 rounded-xl p-4 border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div>
+                           <div className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">Earned inside chosen dates:</div>
+                           <div className="text-xl font-black text-white">₹{periodEarned.toLocaleString()}</div>
+                           <div className="text-[10px] text-gray-500 font-mono mt-0.5">({periodPieces} approved pieces)</div>
+                        </div>
+                        <button type="button" onClick={() => setPayForm({...payForm, amount: periodEarned})} className="w-full md:w-auto px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors">
+                           Fill ₹{periodEarned}
+                        </button>
+                     </div>
+                     <div className="bg-sky-900/10 rounded-xl p-4 border border-sky-900/30 flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div>
+                           <div className="text-[10px] text-sky-400 font-bold uppercase tracking-widest mb-1">Total Lifetime Pending Balance:</div>
+                           <div className="text-2xl font-black text-sky-400">₹{lifetimePending.toLocaleString()}</div>
+                        </div>
+                        <button type="button" onClick={() => setPayForm({...payForm, amount: lifetimePending})} className="w-full md:w-auto px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-xs font-black tracking-widest uppercase rounded-lg transition-colors shadow-lg shadow-sky-500/20">
+                           Fill ₹{lifetimePending}
+                        </button>
+                     </div>
+                 </div>
+               ) : (
+                 <div className="text-center p-4 text-xs text-sky-600/50 font-bold uppercase tracking-widest border border-dashed border-sky-900/30 rounded-xl">Select a tailor above to review earnings</div>
+               )}
+            </div>
+
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Final Payment Amount</label><div className="relative"><IndianRupee size={24} className="absolute left-4 top-4 text-sky-500" /><input type="number" value={payForm.amount} onChange={(e) => setPayForm({...payForm, amount: e.target.value})} placeholder="0.00" className="w-full pl-12 pr-4 py-4 bg-black border border-sky-900/50 rounded-xl text-2xl font-black focus:ring-2 focus:ring-sky-400 outline-none"/></div></div>
+            <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Extra Note (Optional)</label><input type="text" value={payForm.note} onChange={(e) => setPayForm({...payForm, note: e.target.value})} placeholder="e.g. Weekly settlement bonus" className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-sky-400 outline-none"/></div>
+            
+            <button type="submit" disabled={!payForm.tailor || !payForm.amount} className="w-full flex items-center justify-center gap-2 py-4 bg-sky-500 hover:bg-sky-400 text-white font-black tracking-wide rounded-xl transition-all shadow-lg shadow-sky-500/20 disabled:opacity-50 disabled:shadow-none"><Wallet size={18} /> {editingEntryId ? 'Update Payment' : 'Confirm & Log Payment'}</button>
+          </form>
+        </div>
+      </div>
+    );
+  };
 
   const renderSignOff = () => {
     const targetTailor = selectedTailorFilter === 'All' ? tailors[0] : selectedTailorFilter;
@@ -2533,7 +2461,7 @@ export default function App() {
     };
 
     return (
-      <div className="w-full max-w-3xl mx-auto pb-12 print:pb-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="w-full max-w-3xl mx-auto pb-12 px-4 md:px-0 print:px-0 print:pb-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
         <style>
           {`
@@ -2673,6 +2601,58 @@ export default function App() {
     );
   };
 
+  const renderSetup = () => (
+    <div className="w-full max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 md:px-0">
+      <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight text-white">App Configuration</h2><p className="text-gray-400 mt-2">Manage tailor team and product catalog.</p></div>
+      <div className="bg-[#111] rounded-3xl p-6 md:p-10 border border-gray-800 shadow-2xl">
+        
+        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 mb-8 flex gap-4 items-start">
+           <AlertCircle className="text-yellow-500 shrink-0 mt-0.5" size={20} />
+           <div className="text-sm text-yellow-200/80">
+              <strong className="text-yellow-500 block mb-1">How to add Images:</strong>
+              Open your Shopify <strong>products_export.csv</strong> file. Copy the <strong>Title</strong> column and the <strong>Image Src</strong> column, paste them side-by-side in a blank Excel sheet, then copy and paste them together into the Product Catalog box below!
+           </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-3 text-center">Tailor Team (One per line)</label><textarea value={setupForm.tailorsText} onChange={(e) => setSetupForm({...setupForm, tailorsText: e.target.value})} className="w-full h-80 p-4 bg-black border border-gray-800 rounded-2xl text-sm font-mono text-gray-300 focus:ring-2 focus:ring-[#cdfc4c] outline-none resize-none" placeholder="Sajid&#10;Imran" /></div>
+          <div><label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-3 text-center">Product Catalog (Name ⇥ Image URL)</label><textarea value={setupForm.productsText} onChange={(e) => setSetupForm({...setupForm, productsText: e.target.value})} className="w-full h-80 p-4 bg-black border border-gray-800 rounded-2xl text-sm font-mono text-gray-300 focus:ring-2 focus:ring-[#cdfc4c] outline-none resize-none whitespace-pre overflow-x-auto" placeholder="Wrap Around Dress&#9;https://poshakh.com/img1.jpg&#10;Kalamkari Top&#9;https://poshakh.com/img2.jpg" /></div>
+        </div>
+        <button onClick={saveConfig} className="w-full mt-8 py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black tracking-wide rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#cdfc4c]/10"><RefreshCw size={18} /> Save Configuration</button>
+      </div>
+
+      <div className="text-center mb-8 mt-16 pt-12 border-t border-gray-800/50"><h2 className="text-3xl font-black tracking-tight text-white">Data & Reports</h2><p className="text-gray-400 mt-2">Export your records to CSV for Excel or Accounting.</p></div>
+      <div className="bg-[#111] rounded-3xl p-6 md:p-10 border border-gray-800 shadow-2xl">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Report Type</label>
+            <select value={reportForm.type} onChange={(e) => setReportForm({...reportForm, type: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none">
+              <option value="ledger">Detailed Ledger (All Transactions)</option>
+              <option value="settlement">Tailor Settlement (Earnings & Payouts)</option>
+              <option value="production">Production by Style (Inventory)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Filter by Tailor</label>
+            <select value={reportForm.tailor} onChange={(e) => setReportForm({...reportForm, tailor: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none">
+              <option value="All">All Tailors</option>
+              {tailors.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">Start Date</label>
+            <input type="date" value={reportForm.startDate} onChange={(e) => setReportForm({...reportForm, startDate: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest font-bold text-gray-500 mb-2">End Date</label>
+            <input type="date" value={reportForm.endDate} onChange={(e) => setReportForm({...reportForm, endDate: e.target.value})} className="w-full px-4 py-3 bg-black border border-gray-800 rounded-xl text-sm focus:ring-2 focus:ring-[#cdfc4c] outline-none"/>
+          </div>
+        </div>
+        <button onClick={handleDownloadReport} className="w-full py-4 bg-white hover:bg-gray-200 text-black font-black tracking-wide rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg"><Download size={18} /> Generate & Download CSV</button>
+      </div>
+    </div>
+  );
+
   if (loading) {
     return (
       <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c] z-50">
@@ -2687,11 +2667,82 @@ export default function App() {
     );
   }
 
+  const renderLogin = () => {
+    if (loginStep === 'select') {
+      return (
+        <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="max-w-md w-full bg-[#111] p-8 rounded-3xl border border-gray-800 text-center shadow-2xl">
+            <div className="flex justify-center mb-6">
+              <PoshakhLogo size={64} />
+            </div>
+            <h1 className="text-3xl font-black text-white mb-2 tracking-tight">Poshakh</h1>
+            <p className="text-gray-400 mb-8 font-bold text-sm uppercase tracking-widest">Select Workspace</p>
+
+            <div className="space-y-4">
+              <button
+                onClick={() => setLoginStep('pin')}
+                className="w-full py-4 bg-gray-900 border border-gray-700 hover:border-gray-500 rounded-xl text-white font-black text-lg transition-colors flex items-center justify-center gap-3"
+              >
+                <Lock size={20} className="text-gray-400" /> Admin Access
+              </button>
+              <button
+                onClick={() => handleLogin('staff')}
+                className="w-full py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black text-lg rounded-xl transition-colors shadow-lg shadow-[#cdfc4c]/10 flex items-center justify-center gap-3"
+              >
+                <Scissors size={20} /> Factory Floor (Staff)
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (loginStep === 'pin') {
+      return (
+        <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 animate-in fade-in slide-in-from-right-4">
+          <div className="max-w-md w-full bg-[#111] p-8 rounded-3xl border border-gray-800 text-center shadow-2xl relative">
+            <button
+              onClick={() => { setLoginStep('select'); setPinInput(''); }}
+              className="absolute top-6 left-6 text-gray-500 hover:text-white transition-colors p-2"
+            >
+              <ChevronLeft size={24} />
+            </button>
+            <div className="w-16 h-16 bg-gray-900 rounded-full flex items-center justify-center mx-auto mb-6 border border-gray-800">
+               <Lock size={24} className="text-gray-400" />
+            </div>
+            <h2 className="text-2xl font-black text-white mb-2">Admin PIN</h2>
+            <p className="text-gray-400 mb-8 text-sm">Enter access code to continue</p>
+
+            <form onSubmit={(e) => { e.preventDefault(); handleLogin('admin'); }}>
+              <input
+                type="password"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                className="w-full text-center text-4xl tracking-[1em] font-black py-4 bg-black border border-gray-700 rounded-xl text-white mb-6 focus:ring-2 focus:ring-purple-500 outline-none"
+                autoFocus
+                placeholder="****"
+                maxLength={4}
+              />
+              <button
+                type="submit"
+                className="w-full py-4 bg-purple-500 hover:bg-purple-400 text-white font-black text-lg rounded-xl transition-all shadow-lg shadow-purple-500/20"
+              >
+                Unlock
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   if (!isLoggedIn) return renderLogin();
 
   return (
     <div className={`min-h-screen w-full bg-[#0a0a0a] text-white font-sans flex flex-col m-0 p-0 overflow-x-hidden ${isFullscreen ? 'pb-0' : 'pb-28 md:pb-28'}`}>
       
+      {/* Lightbox / QC Viewer Layer */}
       {lightboxData && (
         <div className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center animate-in fade-in" onClick={() => setLightboxData(null)}>
           <div className="relative w-full max-w-6xl max-h-[100vh] flex flex-col items-center justify-center h-full">
@@ -2767,7 +2818,7 @@ export default function App() {
         </div>
       )}
 
-      {!isFullscreen && (
+      {!isFullscreen && activeTab !== 'live' && (
         <header className="bg-[#022c22] border-b border-[#064e3b] px-6 py-4 flex items-center justify-between sticky top-0 z-40 w-full print:hidden shadow-lg">
           <div className="flex items-center gap-4">
             <div className="w-8 h-8 bg-white flex items-center justify-center rounded-lg shadow-sm">
@@ -2800,7 +2851,8 @@ export default function App() {
         </header>
       )}
 
-      <main className={`flex-1 w-full bg-[#0a0a0a] ${activeTab === 'live' ? 'p-0' : 'p-4 md:p-8'} print:p-0 print:bg-white transition-all`}>
+      {/* Primary Dynamic Main Container */}
+      <main className={`flex-1 relative w-full h-full flex flex-col bg-[#0a0a0a] ${activeTab === 'live' ? 'p-0' : 'pt-6'} print:p-0 print:bg-white transition-all`}>
         {activeTab === 'tasks' && renderTasks()}
         {activeTab === 'live' && renderLiveQueue()}
         {activeTab === 'add-batch' && renderAddBatch()}
@@ -2816,7 +2868,7 @@ export default function App() {
       </main>
 
       {!isFullscreen && (
-        <nav className="fixed bottom-0 left-0 w-full bg-black/90 backdrop-blur-md border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+        <nav className="fixed bottom-0 left-0 w-full bg-black/95 backdrop-blur-xl border-t border-gray-900 pb-safe z-50 print:hidden shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
           <div className={`flex items-center h-20 w-full max-w-5xl mx-auto px-4 ${role === 'staff' ? 'justify-center gap-8' : 'justify-around'}`}>
             
             <button onClick={() => setActiveTab('tasks')} className={`flex flex-col items-center justify-center w-full max-w-xs h-full gap-1.5 transition-colors relative ${activeTab === 'tasks' ? 'text-rose-500' : 'text-gray-500 hover:text-rose-400'}`}>
