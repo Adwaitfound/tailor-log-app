@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Scissors, User, Shirt, IndianRupee, Trash2, Camera, Loader2,
-  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter, BarChart3, TrendingUp, AlertTriangle, Calendar, ChevronRight, ChevronLeft
+  Wallet, FileText, Settings, Edit2, PenTool, Printer, RefreshCw, Image as ImageIcon, AlertCircle, ChevronDown, Download, Lock, LogOut, CheckCircle, Clock, ListTodo, Search, Plus, ShoppingBag, Target, Flame, UserCheck, CalendarRange, Activity, Maximize, Minimize, Filter, BarChart3, TrendingUp, AlertTriangle, Calendar, ChevronRight, ChevronLeft, ChevronUp
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -70,7 +70,7 @@ export default function App() {
   const [expandedPlatforms, setExpandedPlatforms] = useState({});
   const [activeStackIndex, setActiveStackIndex] = useState({});
 
-  // Swipe & Wheel Tracking
+  /* Swipe & Wheel Tracking */
   const [touchStart, setTouchStart] = useState(null);
   const [touchEnd, setTouchEnd] = useState(null);
   const lastWheelTime = useRef(0);
@@ -92,6 +92,7 @@ export default function App() {
   const photoCanvasRef = useRef(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
+  /* Helper Functions */
   const formatProductName = (name) => {
     if (!name) return 'Unnamed Item';
     let cleanName = String(name);
@@ -114,6 +115,14 @@ export default function App() {
         });
     }
     return found ? found.image : null;
+  };
+
+  const getUrgencyStyles = (createdAt) => {
+    if (!createdAt) return 'border-gray-800 bg-[#111]';
+    const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
+    if (hours > 48) return 'border-red-500 bg-red-950/20 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse-slow';
+    if (hours > 24) return 'border-orange-500 bg-orange-950/20';
+    return 'border-gray-800 bg-[#111]';
   };
 
   const compressImageToBase64 = (file) => {
@@ -193,15 +202,7 @@ export default function App() {
       return newBlacklist;
   };
 
-  // Re-added critical function that caused crashes if missing!
-  const getUrgencyStyles = (createdAt) => {
-    if (!createdAt) return 'border-gray-800 bg-[#111]';
-    const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
-    if (hours > 48) return 'border-red-500 bg-red-950/20 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse-slow';
-    if (hours > 24) return 'border-orange-500 bg-orange-950/20';
-    return 'border-gray-800 bg-[#111]';
-  };
-
+  /* Initialization & Event Listeners */
   useEffect(() => {
     const handleFullscreenChange = () => { setIsFullscreen(!!document.fullscreenElement); };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -340,6 +341,7 @@ export default function App() {
      }));
   };
 
+  /* Camera & Photo Processing */
   const startCamera = async (slot) => {
     setActiveCameraSlot(slot);
     setIsCameraOpen(true);
@@ -395,6 +397,7 @@ export default function App() {
     setActiveCameraSlot(null);
   };
 
+  /* Auth & Core Actions */
   const toggleNetworkMode = () => {
     const nextMode = !useLocalMode;
     setUseLocalMode(nextMode);
@@ -532,6 +535,7 @@ export default function App() {
     setProdForm(prev => ({ ...prev, sizes: { ...prev.sizes, [size]: numValue } }));
   };
 
+  /* Unified Form Submission (Production) */
   const handleProdSubmit = async (e) => {
     e.preventDefault();
     if (!prodForm.tailor) return showToast("Missing: Please select a Tailor.", "error");
@@ -943,6 +947,7 @@ export default function App() {
     } else { document.exitFullscreen(); }
   };
 
+  /* Analytics & Ledger Memoizations */
   const timeFilteredEntries = useMemo(() => {
     return entries.filter(e => {
       const d = new Date(e.date);
@@ -1078,33 +1083,13 @@ export default function App() {
     return findProductImage(prodForm.product);
   }, [prodForm.product, products]);
 
-  const renderCameraModal = () => {
-    if (!isCameraOpen) return null;
-    return (
-      <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in">
-        <div className="absolute top-8 left-0 w-full text-center z-10 pointer-events-none">
-            <span className="bg-black/80 backdrop-blur-md text-white px-6 py-3 rounded-full text-sm font-black uppercase tracking-widest border border-gray-700 shadow-2xl">
-                Snap {activeCameraSlot} Photo
-            </span>
-        </div>
-        <div className="w-full max-w-lg bg-[#111] rounded-3xl overflow-hidden border border-gray-800 flex flex-col relative shadow-2xl">
-           <video ref={videoRef} autoPlay playsInline className="w-full h-auto bg-black aspect-video object-cover" />
-           <canvas ref={photoCanvasRef} className="hidden" />
-           <div className="p-6 flex gap-4 bg-[#111]">
-              <button onClick={stopCamera} className="flex-1 py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-xl transition-colors">Cancel</button>
-              <button onClick={takePhoto} className="flex-1 py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black rounded-xl flex justify-center items-center gap-2 transition-colors"><Camera size={18}/> Snap</button>
-           </div>
-        </div>
-      </div>
-    );
-  };
-
+  /* Shared Render: Photo Uploader */
   const renderPhotoUploader = (currentWorkType = 'Both', layout = 'grid') => {
     const isCut = currentWorkType === 'Cut';
     const slots = isCut ? ['chest'] : ['chest', 'waist', 'hip'];
 
     return (
-      <div className={layout === 'horizontal' ? 'w-full px-4' : 'pt-4 border-t border-gray-800'}>
+      <div className={layout === 'horizontal' ? 'w-full' : 'pt-4 border-t border-gray-800'}>
         {layout !== 'horizontal' && <label className="block text-[10px] uppercase tracking-widest font-black text-gray-400 mb-4 text-center">
           {isCut ? 'QC Photo (1 Required for Fabric Proof)' : 'QC Photos (3 Required)'}
         </label>}
@@ -1116,17 +1101,17 @@ export default function App() {
                    {isCut && slot === 'chest' ? 'Fabric Proof' : slot}
                  </div>
                  {!imagePreviews[slot] ? (
-                    <div className={`flex gap-2 ${layout === 'horizontal' ? 'flex-col sm:flex-row h-16' : 'flex-col'}`}>
-                        <label className={`flex-1 bg-black border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative ${layout !== 'horizontal' ? 'h-12 w-full' : 'h-full'}`}>
+                    <div className={`flex gap-2 ${layout === 'horizontal' ? 'flex-col sm:flex-row h-12' : 'flex-col'}`}>
+                        <label className={`flex-1 bg-black/40 border border-dashed border-gray-700 rounded-xl flex items-center justify-center cursor-pointer hover:border-[#cdfc4c] text-gray-500 hover:text-[#cdfc4c] transition-colors relative ${layout !== 'horizontal' ? 'h-12 w-full' : 'h-full'}`}>
                             <input type="file" accept="image/*" capture="environment" onChange={(e) => handleImageChange(e, slot)} className="absolute inset-0 opacity-0 cursor-pointer" />
                             <ImageIcon size={16}/>
                         </label>
-                        <button type="button" onClick={() => startCamera(slot)} className={`flex-1 bg-gray-900 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors ${layout !== 'horizontal' ? 'h-12 w-full' : 'h-full'}`}>
+                        <button type="button" onClick={() => startCamera(slot)} className={`flex-1 bg-gray-900/40 border border-dashed border-gray-700 rounded-xl flex items-center justify-center hover:border-sky-500 text-gray-500 hover:text-sky-500 transition-colors ${layout !== 'horizontal' ? 'h-12 w-full' : 'h-full'}`}>
                             <Camera size={16}/>
                         </button>
                     </div>
                  ) : (
-                    <div className={`relative w-full ${layout === 'horizontal' ? 'h-16' : 'h-28'} bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10`}>
+                    <div className={`relative w-full ${layout === 'horizontal' ? 'h-12' : 'h-28'} bg-black rounded-xl border border-[#cdfc4c] overflow-hidden group shadow-lg shadow-[#cdfc4c]/10`}>
                         <img src={imagePreviews[slot]} className="w-full h-full object-cover object-top opacity-80" />
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <button type="button" onClick={() => {
@@ -1144,6 +1129,7 @@ export default function App() {
     );
   };
 
+  /* Render: 3D Live Floor Queue */
   const renderLiveQueue = () => {
     const liveTasks = tasks.filter(t => t.status === 'in_progress');
     const tasksByTailor = liveTasks.reduce((acc, t) => {
@@ -1167,9 +1153,9 @@ export default function App() {
     };
 
     const navigateStack = (tailorName, newIndex, totalItems) => {
-        if (newIndex >= 0 && newIndex < totalItems) {
-            setActiveStackIndex(prev => ({ ...prev, [tailorName]: newIndex }));
-        }
+        if (totalItems <= 1) return;
+        const wrappedIndex = (newIndex % totalItems + totalItems) % totalItems;
+        setActiveStackIndex(prev => ({ ...prev, [tailorName]: wrappedIndex }));
     };
 
     const handleTouchEnd = (tailorName, totalItems, currentIndex) => {
@@ -1177,10 +1163,9 @@ export default function App() {
         const distance = touchStart - touchEnd;
         const minSwipeDistance = 50;
 
-        if (distance > minSwipeDistance && currentIndex < totalItems - 1) {
+        if (distance > minSwipeDistance) {
             navigateStack(tailorName, currentIndex + 1, totalItems);
-        }
-        if (distance < -minSwipeDistance && currentIndex > 0) {
+        } else if (distance < -minSwipeDistance) {
             navigateStack(tailorName, currentIndex - 1, totalItems);
         }
         setTouchStart(null);
@@ -1189,6 +1174,8 @@ export default function App() {
 
     const handleWheel = (e, tailorName, totalItems, currentIndex) => {
         const now = Date.now();
+        if (now < lastWheelTime.current) return;
+        
         if (now - lastWheelTime.current > 150) {
             wheelAccumulator.current = { x: 0, y: 0 };
         }
@@ -1197,24 +1184,17 @@ export default function App() {
         wheelAccumulator.current.x += e.deltaX;
         wheelAccumulator.current.y += e.deltaY;
 
-        const threshold = 60; // Accumulation threshold
-
+        const threshold = 50; 
         if (Math.abs(wheelAccumulator.current.x) > threshold || Math.abs(wheelAccumulator.current.y) > threshold) {
             if (Math.abs(wheelAccumulator.current.x) > Math.abs(wheelAccumulator.current.y)) {
-                if (wheelAccumulator.current.x > 0 && currentIndex < totalItems - 1) {
-                    navigateStack(tailorName, currentIndex + 1, totalItems);
-                } else if (wheelAccumulator.current.x < 0 && currentIndex > 0) {
-                    navigateStack(tailorName, currentIndex - 1, totalItems);
-                }
+                if (wheelAccumulator.current.x > 0) navigateStack(tailorName, currentIndex + 1, totalItems);
+                else if (wheelAccumulator.current.x < 0) navigateStack(tailorName, currentIndex - 1, totalItems);
             } else {
-                if (wheelAccumulator.current.y > 0 && currentIndex < totalItems - 1) {
-                    navigateStack(tailorName, currentIndex + 1, totalItems);
-                } else if (wheelAccumulator.current.y < 0 && currentIndex > 0) {
-                    navigateStack(tailorName, currentIndex - 1, totalItems);
-                }
+                if (wheelAccumulator.current.y > 0) navigateStack(tailorName, currentIndex + 1, totalItems);
+                else if (wheelAccumulator.current.y < 0) navigateStack(tailorName, currentIndex - 1, totalItems);
             }
             wheelAccumulator.current = { x: 0, y: 0 };
-            lastWheelTime.current = now + 400; // temporary lockout
+            lastWheelTime.current = now + 400; 
         }
     };
 
@@ -1232,7 +1212,7 @@ export default function App() {
              
              {role === 'admin' && (
                <div className="relative mt-2 sm:mt-0 sm:ml-6 shadow-xl" title="Filter live floor by tailor">
-                 <User size={16} className="absolute left-3 top-3 text-purple-400"/>
+                 <User size={16} className="absolute left-3 top-3.5 text-purple-400"/>
                  <select value={liveTailorFilter} onChange={(e) => setLiveTailorFilter(e.target.value)} className="w-full sm:w-auto pl-10 pr-8 py-2.5 bg-purple-900/30 backdrop-blur-md border border-purple-500/50 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none appearance-none text-purple-300 font-bold cursor-pointer transition-colors hover:bg-purple-900/50">
                    <option value="All" className="bg-[#111] text-white">Viewing All Floor</option>
                    {tailors.map(t => <option key={t} value={t} className="bg-[#111] text-white">Floor: {t}</option>)}
@@ -1268,7 +1248,7 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col w-full relative overflow-y-auto overflow-x-hidden custom-scrollbar snap-y snap-mandatory">
+          <div className="flex-1 flex flex-col w-full relative overflow-y-auto overflow-x-hidden custom-scrollbar snap-y snap-mandatory scroll-smooth">
             {Object.entries(tasksByTailor).map(([tailorName, items]) => {
               const isMyWork = prodForm.tailor === tailorName || role === 'admin';
               if (isFullscreen && !isMyWork) return null;
@@ -1294,7 +1274,7 @@ export default function App() {
                   </div>
 
                   <div 
-                    className={`flex-1 relative flex items-center justify-center w-full h-full touch-pan-y select-none transition-transform duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${hasSelection ? 'md:-translate-y-20 -translate-y-12' : ''}`}
+                    className={`flex-1 relative flex items-center justify-center w-full h-full touch-pan-x select-none transition-transform duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${hasSelection ? '-translate-y-24' : ''}`}
                     onTouchStart={handleTouchStart}
                     onTouchMove={handleTouchMove}
                     onTouchEnd={() => handleTouchEnd(tailorName, items.length, currentIndex)}
@@ -1306,51 +1286,59 @@ export default function App() {
 
                      {items.length > 1 && (
                         <div className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-4 pointer-events-none">
-                           <div className="bg-[#111]/80 backdrop-blur-xl border border-gray-700 rounded-[3rem] p-3 flex flex-col items-center justify-center gap-6 shadow-[0_0_40px_rgba(0,0,0,0.8)] pointer-events-auto">
+                           <div className="bg-[#111]/80 backdrop-blur-xl border border-gray-700 rounded-[3rem] p-3 flex flex-col items-center justify-center gap-6 shadow-[0_0_40px_rgba(0,0,0,0.8)] pointer-events-auto transition-transform hover:scale-105">
                               <button onClick={(e) => {
                                 e.stopPropagation();
                                 navigateStack(tailorName, currentIndex - 1, items.length);
-                              }} className="w-12 h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center hover:bg-gray-800 transition-colors"><ChevronLeft size={20} className="rotate-90"/></button>
+                              }} className="w-12 h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center hover:bg-gray-800 transition-colors"><ChevronUp size={20}/></button>
                               
                               <div className="w-14 h-14 rounded-full bg-purple-900/30 border border-purple-500/50 flex items-center justify-center text-white font-black text-xl shadow-[0_0_15px_rgba(168,85,247,0.3)]">
                                   {items.length - currentIndex}
                               </div>
-                              <div className="w-0.5 h-20 bg-gray-700 rounded-full"></div>
+                              <div className="w-0.5 h-24 bg-gray-700 rounded-full"></div>
                               <div className="text-gray-500 text-[10px] font-black uppercase tracking-widest whitespace-nowrap mb-2" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Pending In Stack</div>
                               
                               <button onClick={(e) => {
                                 e.stopPropagation();
                                 navigateStack(tailorName, currentIndex + 1, items.length);
-                              }} className="w-12 h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center hover:bg-gray-800 transition-colors"><ChevronRight size={20} className="rotate-90"/></button>
+                              }} className="w-12 h-12 rounded-full bg-black border border-gray-600 text-white flex items-center justify-center hover:bg-gray-800 transition-colors"><ChevronDown size={20}/></button>
                            </div>
                         </div>
                      )}
 
-                     <div className="w-full h-full relative flex items-center justify-center perspective-[1800px] preserve-3d">
+                     <div className="w-full h-full relative flex items-center justify-center perspective-[2000px] preserve-3d">
                         {items.map((st, i) => {
                            const entryImage = findProductImage(st.product);
                            
                            // SAFE DATE PARSING
                            const isValidDate = (d) => d instanceof Date && !isNaN(d);
                            const stDate = st.startedAt ? new Date(st.startedAt) : null;
-                           const startTime = isValidDate(stDate) ? stDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+                           const startTime = isValidDate(stDate) ? stDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now';
                            
                            const isSelected = selectedSubTaskIds.has(st.subId);
                            
-                           const offset = i - currentIndex;
-                           const sign = Math.sign(offset);
-                           const absOffset = Math.abs(offset);
+                           // Circular Math for Infinite Edge-to-Edge Scroll
+                           let offset = i - currentIndex;
+                           if (items.length > 2) {
+                              if (offset > items.length / 2) offset -= items.length;
+                              else if (offset < -items.length / 2) offset += items.length;
+                           }
 
                            const isCenter = offset === 0;
-                           const isVisible = absOffset <= 2;
+                           const absOffset = Math.abs(offset);
+                           const sign = Math.sign(offset);
                            
-                           const translateX = `${offset * 115}%`; 
-                           const translateZ = `${-absOffset * 100}px`;
+                           const isVisible = absOffset <= 1; // Only 1 left, 1 right
+                           
+                           // 95% push ensures only the edge is visible
+                           const translateX = `${offset * 95}%`; 
+                           const translateZ = `${-absOffset * 150}px`;
                            const rotateY = `${-sign * 15}deg`;
-                           const scale = isCenter ? 1 : Math.max(1 - (absOffset * 0.1), 0.8);
+                           const scale = isCenter ? 1 : 0.85;
                            
                            const blurAmount = isCenter ? 0 : absOffset * 4;
-                           const opacity = isCenter ? 1 : (isVisible ? Math.max(1 - (absOffset * 0.4), 0.3) : 0);
+                           // Deep fade for side elements
+                           const opacity = isCenter ? 1 : (isVisible ? 0.4 : 0);
                            const zIndex = 50 - absOffset;
 
                            return (
@@ -1364,7 +1352,7 @@ export default function App() {
                                  }
                                }}
                                className={`absolute top-1/2 left-1/2 rounded-[2.5rem] border-[3px] overflow-hidden flex flex-col justify-end backdrop-blur-xl shadow-[0_30px_60px_rgba(0,0,0,0.8)]
-                                 ${isMyWork ? (isCenter ? 'cursor-pointer' : 'cursor-pointer hover:scale-[1.02]') : 'opacity-50 grayscale pointer-events-none'} 
+                                 ${isMyWork ? (isCenter ? 'cursor-pointer' : 'cursor-pointer hover:scale-[0.87]') : 'opacity-50 grayscale pointer-events-none'} 
                                  ${isSelected && isCenter ? 'border-[#cdfc4c] shadow-[0_0_50px_rgba(205,252,76,0.3)] ring-4 ring-[#cdfc4c]/30' : 'border-gray-800'}
                                `}
                                style={{
@@ -1437,7 +1425,7 @@ export default function App() {
                   </div>
 
                   {isMyWork && (
-                     <div className={`fixed bottom-0 left-0 w-full z-50 transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] transform ${hasSelection ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'}`}>
+                     <div className={`absolute bottom-0 left-0 w-full z-50 transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] transform ${hasSelection ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'}`}>
                         <div className="bg-[#0a0a0a]/95 backdrop-blur-3xl border-t border-gray-800 p-6 pb-safe md:p-8 rounded-t-[2.5rem] shadow-[0_-30px_60px_rgba(0,0,0,0.9)] mx-auto max-w-6xl w-full">
                            
                            <div className="flex flex-col lg:flex-row items-center gap-6 lg:gap-8">
@@ -1473,6 +1461,7 @@ export default function App() {
     );
   };
 
+  /* Render: Tasks List (Priority Queue) */
   const renderTasks = () => {
     const PRIORITY_WEIGHT = { '1': 4, '2': 3, '3': 2, '4': 1, 'Urgent': 4, 'High': 3, 'Normal': 2, 'Low': 1 };
     
@@ -1833,6 +1822,7 @@ export default function App() {
     );
   };
 
+  /* Render: Add/Edit Log */
   const renderAddBatch = () => (
     <div className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 px-4 md:px-0">
       <div className="text-center mb-8"><h2 className="text-3xl font-black tracking-tight">{editingEntryId ? 'Edit Log' : 'Log Stitched Batch'}</h2><p className="text-gray-400 mt-2">Record daily production turnaround.</p></div>
@@ -1920,6 +1910,7 @@ export default function App() {
     </div>
   );
 
+  /* Render: Admin Ledger & Settlement */
   const renderAdminLedger = () => (
     <div className="w-full space-y-6 animate-in fade-in duration-500 pb-20 px-4 md:px-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -2653,20 +2644,6 @@ export default function App() {
     </div>
   );
 
-  if (loading) {
-    return (
-      <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c] z-50">
-        <RefreshCw className="animate-spin mb-4" size={32} />
-        <div className="font-bold tracking-widest text-sm uppercase">Loading Cloud Data</div>
-        {useLocalMode ? null : (
-          <button onClick={() => setUseLocalMode(true)} className="mt-8 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-bold transition-colors">
-            Work Offline (Local Mode)
-          </button>
-        )}
-      </div>
-    );
-  }
-
   const renderLogin = () => {
     if (loginStep === 'select') {
       return (
@@ -2736,6 +2713,41 @@ export default function App() {
     }
     return null;
   };
+
+  const renderCameraModal = () => {
+    if (!isCameraOpen) return null;
+    return (
+      <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in">
+        <div className="absolute top-8 left-0 w-full text-center z-10 pointer-events-none">
+            <span className="bg-black/80 backdrop-blur-md text-white px-6 py-3 rounded-full text-sm font-black uppercase tracking-widest border border-gray-700 shadow-2xl">
+                Snap {activeCameraSlot} Photo
+            </span>
+        </div>
+        <div className="w-full max-w-lg bg-[#111] rounded-3xl overflow-hidden border border-gray-800 flex flex-col relative shadow-2xl">
+           <video ref={videoRef} autoPlay playsInline className="w-full h-auto bg-black aspect-video object-cover" />
+           <canvas ref={photoCanvasRef} className="hidden" />
+           <div className="p-6 flex gap-4 bg-[#111]">
+              <button onClick={stopCamera} className="flex-1 py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-xl transition-colors">Cancel</button>
+              <button onClick={takePhoto} className="flex-1 py-4 bg-[#cdfc4c] hover:bg-[#b5e638] text-black font-black rounded-xl flex justify-center items-center gap-2 transition-colors"><Camera size={18}/> Snap</button>
+           </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col items-center justify-center text-[#cdfc4c] z-50">
+        <RefreshCw className="animate-spin mb-4" size={32} />
+        <div className="font-bold tracking-widest text-sm uppercase">Loading Cloud Data</div>
+        {useLocalMode ? null : (
+          <button onClick={() => setUseLocalMode(true)} className="mt-8 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-xs font-bold transition-colors">
+            Work Offline (Local Mode)
+          </button>
+        )}
+      </div>
+    );
+  }
 
   if (!isLoggedIn) return renderLogin();
 
@@ -2809,6 +2821,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {renderCameraModal()}
 
       {toast && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in">
